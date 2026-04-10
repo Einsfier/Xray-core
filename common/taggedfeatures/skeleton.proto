@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package xray.core.common.taggedfeatures;
+option csharp_namespace = "Xray.Core.Common.Taggedfeatures";
+option go_package = "github.com/xtls/xray-core/common/taggedfeatures";
+option java_package = "com.xray.core.common.taggedfeatures";
+option java_multiple_files = true;
+
+import "common/serial/typed_message.proto";
+
+message Config {
+  map<string, xray.common.serial.TypedMessage> features = 1;
+}

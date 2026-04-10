@@ -11,6 +11,7 @@ import (
 	"github.com/xtls/xray-core/common/dice"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features"
 	"github.com/xtls/xray-core/features/extension"
 )
 
@@ -61,7 +62,15 @@ type node struct {
 func (s *LeastLoadStrategy) InjectContext(ctx context.Context) {
 	s.ctx = ctx
 	common.Must(core.RequireFeatures(s.ctx, func(observatory extension.Observatory) error {
-		s.observer = observatory
+		if s.settings.ObserverTag != "" {
+			obs, err := observatory.(features.TaggedFeatures).GetFeaturesByTag(s.settings.ObserverTag)
+			if err != nil {
+				return err
+			}
+			s.observer = obs.(extension.Observatory)
+		} else {
+			s.observer = observatory
+		}
 		return nil
 	}))
 }
@@ -155,6 +164,8 @@ func (s *LeastLoadStrategy) getNodes(candidates []string, maxRTT time.Duration) 
 
 	var ret []*node
 
+	tolerance := float64(s.settings.Tolerance)
+
 	for _, v := range results.Status {
 		if v.Alive && (v.Delay < maxRTT.Milliseconds() || maxRTT == 0) && outboundlist.contains(v.OutboundTag) {
 			record := &node{
@@ -173,7 +184,18 @@ func (s *LeastLoadStrategy) getNodes(candidates []string, maxRTT time.Duration) 
 				record.CountAll = int(v.HealthPing.All)
 				record.CountFail = int(v.HealthPing.Fail)
 
+				// filter by tolerance: skip nodes whose failure rate exceeds tolerance
+				// tolerance == 1 means no filtering (default when not configured)
+				// require at least 10 samples to avoid cold start misjudgment
+				if tolerance < 1 && record.CountAll >= 10 {
+					failRate := float64(record.CountFail) / float64(record.CountAll)
+					if failRate > tolerance {
+						errors.LogDebug(s.ctx, record.Tag, " skipped, failure rate ", failRate, " exceeds tolerance ", tolerance)
+						continue
+					}
+				}
 			}
+
 			ret = append(ret, record)
 		}
 	}

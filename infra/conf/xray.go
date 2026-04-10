@@ -13,24 +13,25 @@ import (
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/serial"
-	core "github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/transport/internet"
 )
 
 var (
 	inboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
-		"tunnel":        func() interface{} { return new(DokodemoConfig) },
-		"dokodemo-door": func() interface{} { return new(DokodemoConfig) },
-		"http":          func() interface{} { return new(HTTPServerConfig) },
-		"shadowsocks":   func() interface{} { return new(ShadowsocksServerConfig) },
-		"mixed":         func() interface{} { return new(SocksServerConfig) },
-		"socks":         func() interface{} { return new(SocksServerConfig) },
-		"vless":         func() interface{} { return new(VLessInboundConfig) },
-		"vmess":         func() interface{} { return new(VMessInboundConfig) },
-		"trojan":        func() interface{} { return new(TrojanServerConfig) },
-		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
-		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
-		"tun":           func() interface{} { return new(TunConfig) },
+		"tunnel":           func() interface{} { return new(DokodemoConfig) },
+		"dokodemo-door":    func() interface{} { return new(DokodemoConfig) },
+		"http":             func() interface{} { return new(HTTPServerConfig) },
+		"shadowsocks":      func() interface{} { return new(ShadowsocksServerConfig) },
+		"mixed":            func() interface{} { return new(SocksServerConfig) },
+		"socks":            func() interface{} { return new(SocksServerConfig) },
+		"vless":            func() interface{} { return new(VLessInboundConfig) },
+		"vmess":            func() interface{} { return new(VMessInboundConfig) },
+		"trojan":           func() interface{} { return new(TrojanServerConfig) },
+		"wireguard":        func() interface{} { return &WireGuardConfig{IsClient: false} },
+		"hysteria":         func() interface{} { return new(HysteriaServerConfig) },
+		"tun":              func() interface{} { return new(TunConfig) },
+		"http-healthcheck": func() interface{} { return new(HttpHealthCheckConfig) },
 	}, "protocol", "settings")
 
 	outboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
@@ -360,7 +361,9 @@ type Config struct {
 	FakeDNS          *FakeDNSConfig          `json:"fakeDns"`
 	Observatory      *ObservatoryConfig      `json:"observatory"`
 	BurstObservatory *BurstObservatoryConfig `json:"burstObservatory"`
+	MultiObservatory *MultiObservatoryConfig `json:"multiObservatory"`
 	Version          *VersionConfig          `json:"version"`
+	DnsCircuit       *DNSCircuitConfig       `json:"dnsCircuit"`
 }
 
 func (c *Config) findInboundTag(tag string) int {
@@ -429,8 +432,16 @@ func (c *Config) Override(o *Config, fn string) {
 		c.BurstObservatory = o.BurstObservatory
 	}
 
+	if o.MultiObservatory != nil {
+		c.MultiObservatory = o.MultiObservatory
+	}
+
 	if o.Version != nil {
 		c.Version = o.Version
+	}
+
+	if o.DnsCircuit != nil {
+		c.DnsCircuit = o.DnsCircuit
 	}
 
 	// update the Inbound in slice if the only one in override config has same tag
@@ -573,10 +584,26 @@ func (c *Config) Build() (*core.Config, error) {
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}
 
+	if c.MultiObservatory != nil {
+		r, err := c.MultiObservatory.Build()
+		if err != nil {
+			return nil, errors.New("failed to build multi observatory configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
 	if c.Version != nil {
 		r, err := c.Version.Build()
 		if err != nil {
 			return nil, errors.New("failed to build version configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
+	if c.DnsCircuit != nil {
+		r, err := c.DnsCircuit.Build()
+		if err != nil {
+			return nil, errors.New("failed to build dns circuit configuration").Base(err)
 		}
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}

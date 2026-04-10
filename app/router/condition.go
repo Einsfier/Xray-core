@@ -11,7 +11,9 @@ import (
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
+	dns_feature "github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/routing"
+	routing_dns "github.com/xtls/xray-core/features/routing/dns"
 )
 
 type Condition interface {
@@ -91,6 +93,12 @@ func NewIPMatcher(rules []*geodata.IPRule, asType MatcherAsType) (*IPMatcher, er
 
 // Apply implements Condition.
 func (m *IPMatcher) Apply(ctx routing.Context) bool {
+	sCtx, sOK := ctx.(routing_dns.RoutingContextWithSkipDynamicRule)
+	dynIPMatcher, dOK := m.matcher.(*geodata.DynamicGeoIPMatcher)
+	// avoid unexpected dns circuit lookup hit
+	if dOK && sOK && sCtx.GetSkipDynamicRuleIP(dynIPMatcher.Name) {
+		return false
+	}
 	var ips []net.IP
 
 	switch m.asType {
@@ -102,6 +110,18 @@ func (m *IPMatcher) Apply(ctx routing.Context) bool {
 		ips = ctx.GetTargetIPs()
 	default:
 		panic("unk asType")
+	}
+
+	// conn-track matching works on dest selection
+	if m.asType == MatcherAsType_Target && dOK &&
+		strings.HasPrefix(dynIPMatcher.Name, strings.ToUpper(dns_feature.DynamicIPSetDNSCircuitConnTrackDestPrefix)) {
+		for _, dstIP := range ctx.GetTargetIPs() {
+			for _, srcIP := range ctx.GetSourceIPs() {
+				if dynIPMatcher.MatchSrc(srcIP, dstIP) {
+					return true
+				}
+			}
+		}
 	}
 
 	return m.matcher.AnyMatch(ips)

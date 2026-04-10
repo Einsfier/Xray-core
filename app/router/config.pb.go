@@ -73,7 +73,7 @@ func (x Config_DomainStrategy) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Config_DomainStrategy.Descriptor instead.
 func (Config_DomainStrategy) EnumDescriptor() ([]byte, []int) {
-	return file_app_router_config_proto_rawDescGZIP(), []int{5, 0}
+	return file_app_router_config_proto_rawDescGZIP(), []int{8, 0}
 }
 
 type RoutingRule struct {
@@ -504,6 +504,7 @@ type StrategyLeastLoadConfig struct {
 	MaxRTT int64 `protobuf:"varint,5,opt,name=maxRTT,proto3" json:"maxRTT,omitempty"`
 	// acceptable failure rate
 	Tolerance     float32 `protobuf:"fixed32,6,opt,name=tolerance,proto3" json:"tolerance,omitempty"`
+	ObserverTag   string  `protobuf:"bytes,7,opt,name=observer_tag,json=observerTag,proto3" json:"observer_tag,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -573,6 +574,145 @@ func (x *StrategyLeastLoadConfig) GetTolerance() float32 {
 	return 0
 }
 
+func (x *StrategyLeastLoadConfig) GetObserverTag() string {
+	if x != nil {
+		return x.ObserverTag
+	}
+	return ""
+}
+
+type StrategyRandomConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ObserverTag   string                 `protobuf:"bytes,7,opt,name=observer_tag,json=observerTag,proto3" json:"observer_tag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StrategyRandomConfig) Reset() {
+	*x = StrategyRandomConfig{}
+	mi := &file_app_router_config_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StrategyRandomConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StrategyRandomConfig) ProtoMessage() {}
+
+func (x *StrategyRandomConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_config_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StrategyRandomConfig.ProtoReflect.Descriptor instead.
+func (*StrategyRandomConfig) Descriptor() ([]byte, []int) {
+	return file_app_router_config_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *StrategyRandomConfig) GetObserverTag() string {
+	if x != nil {
+		return x.ObserverTag
+	}
+	return ""
+}
+
+type StrategyLeastPingConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ObserverTag   string                 `protobuf:"bytes,7,opt,name=observer_tag,json=observerTag,proto3" json:"observer_tag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StrategyLeastPingConfig) Reset() {
+	*x = StrategyLeastPingConfig{}
+	mi := &file_app_router_config_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StrategyLeastPingConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StrategyLeastPingConfig) ProtoMessage() {}
+
+func (x *StrategyLeastPingConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_config_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StrategyLeastPingConfig.ProtoReflect.Descriptor instead.
+func (*StrategyLeastPingConfig) Descriptor() ([]byte, []int) {
+	return file_app_router_config_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *StrategyLeastPingConfig) GetObserverTag() string {
+	if x != nil {
+		return x.ObserverTag
+	}
+	return ""
+}
+
+type StrategyRoundRobinConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ObserverTag   string                 `protobuf:"bytes,7,opt,name=observer_tag,json=observerTag,proto3" json:"observer_tag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StrategyRoundRobinConfig) Reset() {
+	*x = StrategyRoundRobinConfig{}
+	mi := &file_app_router_config_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StrategyRoundRobinConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StrategyRoundRobinConfig) ProtoMessage() {}
+
+func (x *StrategyRoundRobinConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_config_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StrategyRoundRobinConfig.ProtoReflect.Descriptor instead.
+func (*StrategyRoundRobinConfig) Descriptor() ([]byte, []int) {
+	return file_app_router_config_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *StrategyRoundRobinConfig) GetObserverTag() string {
+	if x != nil {
+		return x.ObserverTag
+	}
+	return ""
+}
+
 type Config struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	DomainStrategy Config_DomainStrategy  `protobuf:"varint,1,opt,name=domain_strategy,json=domainStrategy,proto3,enum=xray.app.router.Config_DomainStrategy" json:"domain_strategy,omitempty"`
@@ -584,7 +724,7 @@ type Config struct {
 
 func (x *Config) Reset() {
 	*x = Config{}
-	mi := &file_app_router_config_proto_msgTypes[5]
+	mi := &file_app_router_config_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +736,7 @@ func (x *Config) String() string {
 func (*Config) ProtoMessage() {}
 
 func (x *Config) ProtoReflect() protoreflect.Message {
-	mi := &file_app_router_config_proto_msgTypes[5]
+	mi := &file_app_router_config_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +749,7 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
-	return file_app_router_config_proto_rawDescGZIP(), []int{5}
+	return file_app_router_config_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Config) GetDomainStrategy() Config_DomainStrategy {
@@ -683,13 +823,20 @@ const file_app_router_config_proto_rawDesc = "" +
 	"\x0eStrategyWeight\x12\x16\n" +
 	"\x06regexp\x18\x01 \x01(\bR\x06regexp\x12\x14\n" +
 	"\x05match\x18\x02 \x01(\tR\x05match\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\x02R\x05value\"\xc0\x01\n" +
+	"\x05value\x18\x03 \x01(\x02R\x05value\"\xe3\x01\n" +
 	"\x17StrategyLeastLoadConfig\x125\n" +
 	"\x05costs\x18\x02 \x03(\v2\x1f.xray.app.router.StrategyWeightR\x05costs\x12\x1c\n" +
 	"\tbaselines\x18\x03 \x03(\x03R\tbaselines\x12\x1a\n" +
 	"\bexpected\x18\x04 \x01(\x05R\bexpected\x12\x16\n" +
 	"\x06maxRTT\x18\x05 \x01(\x03R\x06maxRTT\x12\x1c\n" +
-	"\ttolerance\x18\x06 \x01(\x02R\ttolerance\"\x96\x02\n" +
+	"\ttolerance\x18\x06 \x01(\x02R\ttolerance\x12!\n" +
+	"\fobserver_tag\x18\a \x01(\tR\vobserverTag\"9\n" +
+	"\x14StrategyRandomConfig\x12!\n" +
+	"\fobserver_tag\x18\a \x01(\tR\vobserverTag\"<\n" +
+	"\x17StrategyLeastPingConfig\x12!\n" +
+	"\fobserver_tag\x18\a \x01(\tR\vobserverTag\"=\n" +
+	"\x18StrategyRoundRobinConfig\x12!\n" +
+	"\fobserver_tag\x18\a \x01(\tR\vobserverTag\"\x96\x02\n" +
 	"\x06Config\x12O\n" +
 	"\x0fdomain_strategy\x18\x01 \x01(\x0e2&.xray.app.router.Config.DomainStrategyR\x0edomainStrategy\x120\n" +
 	"\x04rule\x18\x02 \x03(\v2\x1c.xray.app.router.RoutingRuleR\x04rule\x12E\n" +
@@ -714,37 +861,40 @@ func file_app_router_config_proto_rawDescGZIP() []byte {
 }
 
 var file_app_router_config_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_app_router_config_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_app_router_config_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_app_router_config_proto_goTypes = []any{
-	(Config_DomainStrategy)(0),      // 0: xray.app.router.Config.DomainStrategy
-	(*RoutingRule)(nil),             // 1: xray.app.router.RoutingRule
-	(*WebhookConfig)(nil),           // 2: xray.app.router.WebhookConfig
-	(*BalancingRule)(nil),           // 3: xray.app.router.BalancingRule
-	(*StrategyWeight)(nil),          // 4: xray.app.router.StrategyWeight
-	(*StrategyLeastLoadConfig)(nil), // 5: xray.app.router.StrategyLeastLoadConfig
-	(*Config)(nil),                  // 6: xray.app.router.Config
-	nil,                             // 7: xray.app.router.RoutingRule.AttributesEntry
-	nil,                             // 8: xray.app.router.WebhookConfig.HeadersEntry
-	(*geodata.DomainRule)(nil),      // 9: xray.common.geodata.DomainRule
-	(*geodata.IPRule)(nil),          // 10: xray.common.geodata.IPRule
-	(*net.PortList)(nil),            // 11: xray.common.net.PortList
-	(net.Network)(0),                // 12: xray.common.net.Network
-	(*serial.TypedMessage)(nil),     // 13: xray.common.serial.TypedMessage
+	(Config_DomainStrategy)(0),       // 0: xray.app.router.Config.DomainStrategy
+	(*RoutingRule)(nil),              // 1: xray.app.router.RoutingRule
+	(*WebhookConfig)(nil),            // 2: xray.app.router.WebhookConfig
+	(*BalancingRule)(nil),            // 3: xray.app.router.BalancingRule
+	(*StrategyWeight)(nil),           // 4: xray.app.router.StrategyWeight
+	(*StrategyLeastLoadConfig)(nil),  // 5: xray.app.router.StrategyLeastLoadConfig
+	(*StrategyRandomConfig)(nil),     // 6: xray.app.router.StrategyRandomConfig
+	(*StrategyLeastPingConfig)(nil),  // 7: xray.app.router.StrategyLeastPingConfig
+	(*StrategyRoundRobinConfig)(nil), // 8: xray.app.router.StrategyRoundRobinConfig
+	(*Config)(nil),                   // 9: xray.app.router.Config
+	nil,                              // 10: xray.app.router.RoutingRule.AttributesEntry
+	nil,                              // 11: xray.app.router.WebhookConfig.HeadersEntry
+	(*geodata.DomainRule)(nil),       // 12: xray.common.geodata.DomainRule
+	(*geodata.IPRule)(nil),           // 13: xray.common.geodata.IPRule
+	(*net.PortList)(nil),             // 14: xray.common.net.PortList
+	(net.Network)(0),                 // 15: xray.common.net.Network
+	(*serial.TypedMessage)(nil),      // 16: xray.common.serial.TypedMessage
 }
 var file_app_router_config_proto_depIdxs = []int32{
-	9,  // 0: xray.app.router.RoutingRule.domain:type_name -> xray.common.geodata.DomainRule
-	10, // 1: xray.app.router.RoutingRule.ip:type_name -> xray.common.geodata.IPRule
-	11, // 2: xray.app.router.RoutingRule.port_list:type_name -> xray.common.net.PortList
-	12, // 3: xray.app.router.RoutingRule.networks:type_name -> xray.common.net.Network
-	10, // 4: xray.app.router.RoutingRule.source_ip:type_name -> xray.common.geodata.IPRule
-	11, // 5: xray.app.router.RoutingRule.source_port_list:type_name -> xray.common.net.PortList
-	7,  // 6: xray.app.router.RoutingRule.attributes:type_name -> xray.app.router.RoutingRule.AttributesEntry
-	10, // 7: xray.app.router.RoutingRule.local_ip:type_name -> xray.common.geodata.IPRule
-	11, // 8: xray.app.router.RoutingRule.local_port_list:type_name -> xray.common.net.PortList
-	11, // 9: xray.app.router.RoutingRule.vless_route_list:type_name -> xray.common.net.PortList
+	12, // 0: xray.app.router.RoutingRule.domain:type_name -> xray.common.geodata.DomainRule
+	13, // 1: xray.app.router.RoutingRule.ip:type_name -> xray.common.geodata.IPRule
+	14, // 2: xray.app.router.RoutingRule.port_list:type_name -> xray.common.net.PortList
+	15, // 3: xray.app.router.RoutingRule.networks:type_name -> xray.common.net.Network
+	13, // 4: xray.app.router.RoutingRule.source_ip:type_name -> xray.common.geodata.IPRule
+	14, // 5: xray.app.router.RoutingRule.source_port_list:type_name -> xray.common.net.PortList
+	10, // 6: xray.app.router.RoutingRule.attributes:type_name -> xray.app.router.RoutingRule.AttributesEntry
+	13, // 7: xray.app.router.RoutingRule.local_ip:type_name -> xray.common.geodata.IPRule
+	14, // 8: xray.app.router.RoutingRule.local_port_list:type_name -> xray.common.net.PortList
+	14, // 9: xray.app.router.RoutingRule.vless_route_list:type_name -> xray.common.net.PortList
 	2,  // 10: xray.app.router.RoutingRule.webhook:type_name -> xray.app.router.WebhookConfig
-	8,  // 11: xray.app.router.WebhookConfig.headers:type_name -> xray.app.router.WebhookConfig.HeadersEntry
-	13, // 12: xray.app.router.BalancingRule.strategy_settings:type_name -> xray.common.serial.TypedMessage
+	11, // 11: xray.app.router.WebhookConfig.headers:type_name -> xray.app.router.WebhookConfig.HeadersEntry
+	16, // 12: xray.app.router.BalancingRule.strategy_settings:type_name -> xray.common.serial.TypedMessage
 	4,  // 13: xray.app.router.StrategyLeastLoadConfig.costs:type_name -> xray.app.router.StrategyWeight
 	0,  // 14: xray.app.router.Config.domain_strategy:type_name -> xray.app.router.Config.DomainStrategy
 	1,  // 15: xray.app.router.Config.rule:type_name -> xray.app.router.RoutingRule
@@ -771,7 +921,7 @@ func file_app_router_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_app_router_config_proto_rawDesc), len(file_app_router_config_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

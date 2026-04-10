@@ -83,6 +83,7 @@ func (r *Router) Init(ctx context.Context, config *Config, d dns.Client, ohm out
 				r.closeWebhooks()
 				return errors.New("balancer ", btag, " not found")
 			}
+			rr.BTag = btag
 			rr.Balancer = brule
 		}
 		r.rules = append(r.rules, rr)

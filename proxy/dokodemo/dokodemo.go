@@ -3,6 +3,7 @@ package dokodemo
 import (
 	"context"
 	"slices"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -13,9 +14,11 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/common/signal"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
@@ -38,6 +41,7 @@ type DokodemoDoor struct {
 	port          net.Port
 	portMap       map[string]string
 	sockopt       *session.Sockopt
+	*proxy.ActivityObserver
 }
 
 // Init initializes the DokodemoDoor instance with necessary parameters.
@@ -51,6 +55,7 @@ func (d *DokodemoDoor) Init(config *Config, pm policy.Manager, sockopt *session.
 	d.portMap = config.PortMap
 	d.policyManager = pm
 	d.sockopt = sockopt
+	d.ActivityObserver = proxy.NewActivityObserver()
 
 	return nil
 }
@@ -150,6 +155,13 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn st
 	})
 	errors.LogInfo(ctx, "received request for ", conn.RemoteAddr())
 
+	addrPort, _ := netip.ParseAddrPort(conn.RemoteAddr().String())
+	onSendUpdater, onRecvUpdater := d.GetAllActivityUpdater(net.Destination{
+		Address: net.IPAddress(addrPort.Addr().AsSlice()),
+		Port:    net.Port(addrPort.Port()),
+		Network: network,
+	}, dest)
+
 	var reader buf.Reader
 	if dest.Network == net.Network_TCP {
 		reader = buf.NewReader(conn)
@@ -191,8 +203,8 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn st
 	}
 
 	if err := dispatcher.DispatchLink(ctx, dest, &transport.Link{
-		Reader: reader,
-		Writer: writer},
+		Reader: &activityReader{Reader: reader, updater: onSendUpdater},
+		Writer: &activityWriter{Writer: writer, updater: onRecvUpdater}},
 	); err != nil {
 		return errors.New("failed to dispatch request").Base(err)
 	}
@@ -268,4 +280,30 @@ func (w *PacketWriter) Close() error {
 		}
 	}
 	return nil
+}
+
+type activityReader struct {
+	buf.Reader
+	updater signal.ActivityUpdater
+}
+
+func (r *activityReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	mb, err := r.Reader.ReadMultiBuffer()
+	if err == nil && r.updater != nil {
+		r.updater.Update()
+	}
+	return mb, err
+}
+
+type activityWriter struct {
+	buf.Writer
+	updater signal.ActivityUpdater
+}
+
+func (w *activityWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	err := w.Writer.WriteMultiBuffer(mb)
+	if err == nil && w.updater != nil {
+		w.updater.Update()
+	}
+	return err
 }

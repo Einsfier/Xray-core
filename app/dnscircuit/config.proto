@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package xray.app.dnscircuit;
+option csharp_namespace = "Xray.App.DnsCircuit";
+option go_package = "github.com/xtls/xray-core/app/dnscircuit";
+option java_package = "com.xray.app.dnscircuit";
+option java_multiple_files = true;
+
+import "common/geodata/geodat.proto";
+
+message Config {
+  repeated string inbound_tags = 1;
+  repeated string outbound_tags = 2;
+  repeated string balancer_tags = 3;
+  string dns_outbound_tag = 4;
+  int64 inactive_clean = 5;
+  OSPFInstanceConfig ospf_setting = 6;
+  repeated xray.common.geodata.IPRule persistent_route = 7;
+}
+
+message OSPFInstanceConfig {
+  string if_name = 1;
+  xray.common.geodata.CIDR address = 2;
+}
