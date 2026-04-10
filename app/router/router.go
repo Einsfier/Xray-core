@@ -135,6 +135,7 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			if !found {
 				return errors.New("balancer ", btag, " not found")
 			}
+			rr.BTag = btag
 			rr.Balancer = brule
 		}
 		newRules = append(newRules, rr)

@@ -52,6 +52,10 @@ func loadIP(file, code string) ([]*CIDR, error) {
 	return geoip.Cidr, nil
 }
 
+func LoadIP(file, code string) ([]*CIDR, error) {
+	return loadIP(file, code)
+}
+
 func loadSite(file, code string) ([]*Domain, error) {
 	bs, err := loadFile(file, code)
 	if err != nil {

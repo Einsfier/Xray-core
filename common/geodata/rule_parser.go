@@ -16,6 +16,21 @@ const (
 func ParseIPRules(rules []string) ([]*IPRule, error) {
 	var ipRules []*IPRule
 
+	if len(rules) == 1 && strings.HasPrefix(strings.ToUpper(rules[0]), "DYNAMIC-IPSET:") {
+		_, reverse := cutReversePrefix(rules[0])
+		return []*IPRule{
+			{
+				Value: &IPRule_Geoip{
+					Geoip: &GeoIPRule{
+						File:         "DYNAMIC-IPSET:",
+						Code:         strings.ToUpper(rules[0]),
+						ReverseMatch: reverse,
+					},
+				},
+			},
+		}, nil
+	}
+
 	for i, r := range rules {
 		r, reverse := cutReversePrefix(r)
 

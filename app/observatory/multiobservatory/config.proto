@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package xray.core.app.observatory.multiobservatory;
+option csharp_namespace = "Xray.App.Observatory.MultiObservatory";
+option go_package = "github.com/xtls/xray-core/app/observatory/multiobservatory";
+option java_package = "com.xray.app.observatory.multiObservatory";
+option java_multiple_files = true;
+
+import "common/taggedfeatures/skeleton.proto";
+
+message Config {
+  xray.core.common.taggedfeatures.Config holders = 1;
+}
