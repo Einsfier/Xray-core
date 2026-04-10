@@ -12,6 +12,7 @@ import (
 	"github.com/xtls/xray-core/common/dice"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features"
 	"github.com/xtls/xray-core/features/extension"
 )
 
@@ -62,7 +63,15 @@ type node struct {
 func (s *LeastLoadStrategy) InjectContext(ctx context.Context) {
 	s.ctx = ctx
 	common.Must(core.RequireFeatures(s.ctx, func(observatory extension.Observatory) error {
-		s.observer = observatory
+		if s.settings.ObserverTag != "" {
+			obs, err := observatory.(features.TaggedFeatures).GetFeaturesByTag(s.settings.ObserverTag)
+			if err != nil {
+				return err
+			}
+			s.observer = obs.(extension.Observatory)
+		} else {
+			s.observer = observatory
+		}
 		return nil
 	}))
 }
@@ -172,7 +181,6 @@ func (s *LeastLoadStrategy) getNodes(candidates []string) []*node {
 				record.CountAll = int(v.HealthPing.All)
 				record.CountFail = int(v.HealthPing.Fail)
 			}
-
 			ret = append(ret, record)
 		}
 	}

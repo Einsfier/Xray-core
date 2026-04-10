@@ -12,6 +12,7 @@ import (
 
 type Rule struct {
 	Tag       string
+	BTag      string
 	RuleTag   string
 	Balancer  *Balancer
 	Condition Condition
@@ -121,16 +122,32 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatcher) (*Balancer, error) {
 	switch strings.ToLower(br.Strategy) {
 	case "leastping":
+		var observerTag string
+		if br.StrategySettings != nil {
+			if i, err := br.StrategySettings.GetInstance(); err == nil {
+				if s, ok := i.(*StrategyLeastPingConfig); ok {
+					observerTag = s.ObserverTag
+				}
+			}
+		}
 		return &Balancer{
 			selectors:   br.OutboundSelector,
-			strategy:    &LeastPingStrategy{},
+			strategy:    &LeastPingStrategy{observerTag: observerTag},
 			fallbackTag: br.FallbackTag,
 			ohm:         ohm,
 		}, nil
 	case "roundrobin":
+		var observerTag string
+		if br.StrategySettings != nil {
+			if i, err := br.StrategySettings.GetInstance(); err == nil {
+				if s, ok := i.(*StrategyRoundRobinConfig); ok {
+					observerTag = s.ObserverTag
+				}
+			}
+		}
 		return &Balancer{
 			selectors:   br.OutboundSelector,
-			strategy:    &RoundRobinStrategy{FallbackTag: br.FallbackTag},
+			strategy:    &RoundRobinStrategy{FallbackTag: br.FallbackTag, observerTag: observerTag},
 			fallbackTag: br.FallbackTag,
 			ohm:         ohm,
 		}, nil
@@ -153,11 +170,19 @@ func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatch
 	case "random":
 		fallthrough
 	case "":
+		var observerTag string
+		if br.StrategySettings != nil {
+			if i, err := br.StrategySettings.GetInstance(); err == nil {
+				if s, ok := i.(*StrategyRandomConfig); ok {
+					observerTag = s.ObserverTag
+				}
+			}
+		}
 		return &Balancer{
 			selectors:   br.OutboundSelector,
 			ohm:         ohm,
 			fallbackTag: br.FallbackTag,
-			strategy:    &RandomStrategy{FallbackTag: br.FallbackTag},
+			strategy:    &RandomStrategy{FallbackTag: br.FallbackTag, observerTag: observerTag},
 		}, nil
 	default:
 		return nil, errors.New("unrecognized balancer type")

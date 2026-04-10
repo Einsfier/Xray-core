@@ -57,6 +57,75 @@ func getStatCounter(v *core.Instance, tag string) (stats.Counter, stats.Counter)
 	return uplinkCounter, downlinkCounter
 }
 
+type StatsWriter struct {
+	buf.Writer
+	counter stats.Counter
+}
+
+func (w *StatsWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	if mb != nil && !mb.IsEmpty() {
+		w.counter.Add(int64(mb.Len()))
+	}
+	return w.Writer.WriteMultiBuffer(mb)
+}
+
+type StatsReader struct {
+	buf.Reader
+	counter stats.Counter
+}
+
+func (r *StatsReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	mb, err := r.Reader.ReadMultiBuffer()
+	if mb != nil && !mb.IsEmpty() {
+		r.counter.Add(int64(mb.Len()))
+	}
+	return mb, err
+}
+
+func (h *Handler) getOutboundCtxAwareStatLink(ctx context.Context, link *transport.Link) *transport.Link {
+	inb := session.InboundFromContext(ctx)
+	if inb == nil || inb.Source.Address == nil {
+		return link
+	}
+	ret := &transport.Link{
+		Reader: link.Reader,
+		Writer: link.Writer,
+	}
+	srcAddr := inb.Source.Address.String()
+
+	if len(h.tag) > 0 && h.policy.ForSystem().Stats.OutboundUplink && len(srcAddr) > 0 {
+		name := "outbound>>>" + h.tag + ">>>traffic>>>uplink>>>src>>>" + srcAddr
+		c, _ := stats.GetOrRegisterCounter(h.stats, name)
+		if c != nil {
+			ret.Reader = &StatsReader{
+				Reader:  link.Reader,
+				counter: c,
+			}
+		}
+	}
+	if len(h.tag) > 0 && h.policy.ForSystem().Stats.OutboundDownlink && len(srcAddr) > 0 {
+		name := "outbound>>>" + h.tag + ">>>traffic>>>downlink>>>src>>>" + srcAddr
+		c, _ := stats.GetOrRegisterCounter(h.stats, name)
+		if c != nil {
+			ret.Writer = &StatsWriter{
+				Writer:  link.Writer,
+				counter: c,
+			}
+		}
+	}
+
+	if len(h.tag) > 0 && (h.policy.ForSystem().Stats.OutboundUplink || h.policy.ForSystem().Stats.OutboundDownlink) &&
+		len(srcAddr) > 0 {
+		name := "outbound>>>" + h.tag + ">>>connection>>>attempt>>>src>>>" + srcAddr
+		c, _ := stats.GetOrRegisterCounter(h.stats, name)
+		if c != nil {
+			c.Add(1)
+		}
+	}
+
+	return ret
+}
+
 // Handler implements outbound.Handler.
 type Handler struct {
 	tag             string
@@ -64,6 +133,8 @@ type Handler struct {
 	streamSettings  *internet.MemoryStreamConfig
 	proxyConfig     proto.Message
 	proxy           proxy.Outbound
+	policy          policy.Manager
+	stats           stats.Manager
 	outboundManager outbound.Manager
 	mux             *mux.ClientManager
 	xudp            *mux.ClientManager
@@ -79,6 +150,8 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 	h := &Handler{
 		tag:             config.Tag,
 		outboundManager: v.GetFeature(outbound.ManagerType()).(outbound.Manager),
+		policy:          v.GetFeature(policy.ManagerType()).(policy.Manager),
+		stats:           v.GetFeature(stats.ManagerType()).(stats.Manager),
 		uplinkCounter:   uplinkCounter,
 		downlinkCounter: downlinkCounter,
 	}
@@ -207,6 +280,7 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 		link.Reader = &buf.EndpointOverrideReader{Reader: link.Reader, Dest: ob.Target.Address, OriginalDest: ob.OriginalTarget.Address}
 		link.Writer = &buf.EndpointOverrideWriter{Writer: link.Writer, Dest: ob.Target.Address, OriginalDest: ob.OriginalTarget.Address}
 	}
+	link = h.getOutboundCtxAwareStatLink(ctx, link)
 	if h.mux != nil {
 		test := func(err error) {
 			if err != nil {
