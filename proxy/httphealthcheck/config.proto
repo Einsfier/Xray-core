@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package xray.proxy.httphealthcheck;
+option csharp_namespace = "Xray.Proxy.HttpHealthCheck";
+option go_package = "github.com/xtls/xray-core/proxy/httphealthcheck";
+option java_package = "com.xray.proxy.httphealthcheck";
+option java_multiple_files = true;
+
+// Config for HTTP health check server.
+message HealthServerConfig {
+  uint32 timeout = 1;
+}

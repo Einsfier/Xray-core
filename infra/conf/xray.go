@@ -26,19 +26,20 @@ import (
 
 var (
 	inboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
-		"tunnel":        func() interface{} { return new(DokodemoConfig) },
-		"dokodemo-door": func() interface{} { return new(DokodemoConfig) },
-		"http":          func() interface{} { return new(HTTPServerConfig) },
-		"shadowsocks":   func() interface{} { return new(ShadowsocksServerConfig) },
-		"mixed":         func() interface{} { return new(SocksServerConfig) },
-		"socks":         func() interface{} { return new(SocksServerConfig) },
-		"vless":         func() interface{} { return new(VLessInboundConfig) },
-		"vmess":         func() interface{} { return new(VMessInboundConfig) },
-		"trojan":        func() interface{} { return new(TrojanServerConfig) },
-		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
-		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
-		"masque":        func() interface{} { return new(MasqueServerConfig) },
-		"tun":           func() interface{} { return new(TunConfig) },
+		"tunnel":           func() interface{} { return new(DokodemoConfig) },
+		"dokodemo-door":    func() interface{} { return new(DokodemoConfig) },
+		"http":             func() interface{} { return new(HTTPServerConfig) },
+		"shadowsocks":      func() interface{} { return new(ShadowsocksServerConfig) },
+		"mixed":            func() interface{} { return new(SocksServerConfig) },
+		"socks":            func() interface{} { return new(SocksServerConfig) },
+		"vless":            func() interface{} { return new(VLessInboundConfig) },
+		"vmess":            func() interface{} { return new(VMessInboundConfig) },
+		"trojan":           func() interface{} { return new(TrojanServerConfig) },
+		"wireguard":        func() interface{} { return &WireGuardConfig{IsClient: false} },
+		"hysteria":         func() interface{} { return new(HysteriaServerConfig) },
+		"masque":           func() interface{} { return new(MasqueServerConfig) },
+		"tun":              func() interface{} { return new(TunConfig) },
+		"http-healthcheck": func() interface{} { return new(HttpHealthCheckConfig) },
 	}, "protocol", "settings")
 
 	outboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
@@ -462,6 +463,7 @@ type Config struct {
 	LogConfig        *LogConfig              `json:"log"`
 	RouterConfig     *RouterConfig           `json:"routing"`
 	DNSConfig        *DNSConfig              `json:"dns"`
+	DnsCircuit       *DNSCircuitConfig       `json:"dnsCircuit"`
 	InboundConfigs   []InboundDetourConfig   `json:"inbounds"`
 	OutboundConfigs  []OutboundDetourConfig  `json:"outbounds"`
 	Policy           *PolicyConfig           `json:"policy"`
@@ -472,6 +474,7 @@ type Config struct {
 	FakeDNS          *FakeDNSConfig          `json:"fakeDns"`
 	Observatory      *ObservatoryConfig      `json:"observatory"`
 	BurstObservatory *BurstObservatoryConfig `json:"burstObservatory"`
+	MultiObservatory *MultiObservatoryConfig `json:"multiObservatory"`
 	Version          *VersionConfig          `json:"version"`
 	Geodata          *GeodataConfig          `json:"geodata"`
 }
@@ -511,6 +514,9 @@ func (c *Config) Override(o *Config, fn string) {
 	if o.DNSConfig != nil {
 		c.DNSConfig = o.DNSConfig
 	}
+	if o.DnsCircuit != nil {
+		c.DnsCircuit = o.DnsCircuit
+	}
 	if o.Transport != nil {
 		c.Transport = o.Transport
 	}
@@ -546,6 +552,10 @@ func (c *Config) Override(o *Config, fn string) {
 
 	if o.BurstObservatory != nil {
 		c.BurstObservatory = o.BurstObservatory
+	}
+
+	if o.MultiObservatory != nil {
+		c.MultiObservatory = o.MultiObservatory
 	}
 
 	if o.Version != nil {
@@ -661,6 +671,14 @@ func (c *Config) Build() (*core.Config, error) {
 		config.App = append(config.App, serial.ToTypedMessage(dnsApp))
 	}
 
+	if c.DnsCircuit != nil {
+		r, err := c.DnsCircuit.Build()
+		if err != nil {
+			return nil, errors.New("failed to build dns circuit configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
 	if c.Policy != nil {
 		pc, err := c.Policy.Build()
 		if err != nil {
@@ -698,6 +716,14 @@ func (c *Config) Build() (*core.Config, error) {
 		r, err := c.BurstObservatory.Build()
 		if err != nil {
 			return nil, errors.New("failed to build burst observatory configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
+	if c.MultiObservatory != nil {
+		r, err := c.MultiObservatory.Build()
+		if err != nil {
+			return nil, errors.New("failed to build multi observatory configuration").Base(err)
 		}
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}

@@ -1,0 +1,20 @@
+package routing
+
+import (
+	"github.com/xtls/xray-core/common/net"
+)
+
+type RouterWithDynamicRule interface {
+	RouterB
+	// GetDynamicRuleIP returns a dynamic routing rule based on IPNet.
+	// currently, only "dynamic-ipset:XXXX" is supported.
+	// Be noted that rules with same name are Singleton.
+	GetDynamicRuleIP(ruleName string) DynamicRuleIP
+}
+
+type DynamicRuleIP interface {
+	AddIPNet(ipNets ...net.IPNet)
+	RemoveIPNet(ipNets ...net.IPNet)
+	AddIPNetConnTrack(src net.IP, dsts ...net.IPNet)
+	RemoveIPNetConnTrack(src net.IP, dsts ...net.IPNet)
+}

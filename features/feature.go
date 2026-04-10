@@ -10,3 +10,10 @@ type Feature interface {
 	common.HasType
 	common.Runnable
 }
+
+// TaggedFeatures is a container that holds multiple features indexed by tag.
+type TaggedFeatures interface {
+	GetFeaturesByTag(tag string) (Feature, error)
+	GetFeaturesTag() []string
+	common.Runnable
+}

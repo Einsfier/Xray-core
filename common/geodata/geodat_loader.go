@@ -55,6 +55,10 @@ func loadIP(file, code string) ([]*CIDR, error) {
 	return geoip.Cidr, nil
 }
 
+func LoadIP(file, code string) ([]*CIDR, error) {
+	return loadIP(file, code)
+}
+
 // loadSite calls fn, in file order, with the type and value of every domain of the geosite code
 // that has all the "@"-separated attrs. It decodes the entry while reading the file instead of
 // unmarshalling it into a []*Domain, so value is only valid during fn.
