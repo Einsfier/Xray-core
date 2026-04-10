@@ -8,6 +8,7 @@ import (
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features"
 	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/outbound"
 )
@@ -25,6 +26,7 @@ type RoundRobinStrategy struct {
 
 	ctx         context.Context
 	observatory extension.Observatory
+	observerTag string
 	mu          sync.Mutex
 	index       int
 }
@@ -33,7 +35,15 @@ func (s *RoundRobinStrategy) InjectContext(ctx context.Context) {
 	s.ctx = ctx
 	if len(s.FallbackTag) > 0 {
 		common.Must(core.RequireFeatures(s.ctx, func(observatory extension.Observatory) error {
-			s.observatory = observatory
+			if s.observerTag != "" {
+				obs, err := observatory.(features.TaggedFeatures).GetFeaturesByTag(s.observerTag)
+				if err != nil {
+					return err
+				}
+				s.observatory = obs.(extension.Observatory)
+			} else {
+				s.observatory = observatory
+			}
 			return nil
 		}))
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/policy"
+	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/stat"
@@ -72,6 +73,7 @@ type ownLinkVerifier interface {
 
 type Handler struct {
 	client          dns.Client
+	observers       map[string]proxy.DNSOutBoundNoticeFn
 	fdns            dns.FakeDNSEngine
 	ownLinkVerifier ownLinkVerifier
 	server          net.Destination
@@ -81,6 +83,7 @@ type Handler struct {
 
 func (h *Handler) Init(config *Config, dnsClient dns.Client, policyManager policy.Manager) error {
 	h.client = dnsClient
+	h.observers = make(map[string]proxy.DNSOutBoundNoticeFn)
 	h.timeout = policyManager.ForLevel(config.UserLevel).Timeouts.ConnectionIdle
 
 	if v, ok := dnsClient.(ownLinkVerifier); ok {
@@ -268,7 +271,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, d internet.
 						return err
 					}
 				} else {
-					go h.handleIPQuery(id, qType, domain, writer, timer)
+					go h.handleIPQuery(ctx, id, qType, domain, writer, timer)
 				}
 			case RuleAction_Direct:
 				if err := connWriter.WriteMessage(b); err != nil {
@@ -307,7 +310,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, d internet.
 	return nil
 }
 
-func (h *Handler) handleIPQuery(id uint16, qType dnsmessage.Type, domain string, writer dns_proto.MessageWriter, timer *signal.ActivityTimer) {
+func (h *Handler) handleIPQuery(ctx context.Context, id uint16, qType dnsmessage.Type, domain string, writer dns_proto.MessageWriter, timer *signal.ActivityTimer) {
 	var ips []net.IP
 	var err error
 
@@ -328,6 +331,8 @@ func (h *Handler) handleIPQuery(id uint16, qType dnsmessage.Type, domain string,
 			FakeEnable: true,
 		})
 	}
+
+	h.observeDNSOutBound(ctx, strings.TrimRight(domain, "."), ips, err)
 
 	rcode := dns.RCodeFromError(err)
 	if rcode == 0 && len(ips) == 0 && !go_errors.Is(err, dns.ErrEmptyResponse) {
@@ -433,6 +438,20 @@ func (h *Handler) rejectNonIPQuery(id uint16, qType dnsmessage.Type, domain stri
 		return err
 	}
 	return nil
+}
+
+func (h *Handler) RegisterDNSOutBoundObserver(obName string, notice proxy.DNSOutBoundNoticeFn) {
+	h.observers[obName] = notice
+}
+
+func (h *Handler) UnregisterDNSOutBoundObserver(obName string) {
+	delete(h.observers, obName)
+}
+
+func (h *Handler) observeDNSOutBound(ctx context.Context, domain string, results []net.IP, err error) {
+	for _, ob := range h.observers {
+		ob(ctx, domain, results, err)
+	}
 }
 
 type outboundConn struct {

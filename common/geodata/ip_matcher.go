@@ -948,6 +948,19 @@ func (f *IPSetFactory) createFrom(yield func(func(*CIDR)) error) (*IPSet, error)
 }
 
 func buildOptimizedIPMatcher(f *IPSetFactory, rules []*IPRule) (IPMatcher, error) {
+	// Check for dynamic-ipset: prefix - return a DynamicGeoIPMatcher
+	if len(rules) == 1 && rules[0] != nil {
+		v, ok := rules[0].Value.(*IPRule_Geoip)
+		if ok && strings.HasPrefix(strings.ToUpper(v.Geoip.File), "DYNAMIC-IPSET:") {
+			dm, err := GetOrCreateDynamicGeoIPMatcher(v.Geoip.Code)
+			if err != nil {
+				return nil, err
+			}
+			errors.LogDebug(context.Background(), "init dynamic ip matcher: "+v.Geoip.Code+" done")
+			return dm, nil
+		}
+	}
+
 	n := len(rules)
 	posCustom := make([]*CIDR, 0, n)
 	negCustom := make([]*CIDR, 0, n)

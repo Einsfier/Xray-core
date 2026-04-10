@@ -7,12 +7,14 @@ import (
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features"
 	"github.com/xtls/xray-core/features/extension"
 )
 
 type LeastPingStrategy struct {
 	ctx         context.Context
 	observatory extension.Observatory
+	observerTag string
 }
 
 func (l *LeastPingStrategy) GetPrincipleTarget(strings []string) []string {
@@ -22,7 +24,15 @@ func (l *LeastPingStrategy) GetPrincipleTarget(strings []string) []string {
 func (l *LeastPingStrategy) InjectContext(ctx context.Context) {
 	l.ctx = ctx
 	common.Must(core.RequireFeatures(l.ctx, func(observatory extension.Observatory) error {
-		l.observatory = observatory
+		if l.observerTag != "" {
+			obs, err := observatory.(features.TaggedFeatures).GetFeaturesByTag(l.observerTag)
+			if err != nil {
+				return err
+			}
+			l.observatory = obs.(extension.Observatory)
+		} else {
+			l.observatory = observatory
+		}
 		return nil
 	}))
 }

@@ -1,8 +1,9 @@
 package conf
 
 import (
-	"google.golang.org/protobuf/proto"
 	"strings"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/xtls/xray-core/app/observatory/burst"
 	"github.com/xtls/xray-core/app/router"
@@ -18,18 +19,35 @@ const (
 
 var (
 	strategyConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
-		strategyRandom:     func() interface{} { return new(strategyEmptyConfig) },
-		strategyLeastPing:  func() interface{} { return new(strategyEmptyConfig) },
-		strategyRoundRobin: func() interface{} { return new(strategyEmptyConfig) },
+		strategyRandom:     func() interface{} { return new(strategyRandomConfig) },
+		strategyLeastPing:  func() interface{} { return new(strategyLeastPingConfig) },
+		strategyRoundRobin: func() interface{} { return new(strategyRoundRobinConfig) },
 		strategyLeastLoad:  func() interface{} { return new(strategyLeastLoadConfig) },
 	}, "type", "settings")
 )
 
-type strategyEmptyConfig struct {
+type strategyRandomConfig struct {
+	ObserverTag string `json:"observerTag"`
 }
 
-func (v *strategyEmptyConfig) Build() (proto.Message, error) {
-	return nil, nil
+func (v *strategyRandomConfig) Build() (proto.Message, error) {
+	return &router.StrategyRandomConfig{ObserverTag: v.ObserverTag}, nil
+}
+
+type strategyLeastPingConfig struct {
+	ObserverTag string `json:"observerTag"`
+}
+
+func (v *strategyLeastPingConfig) Build() (proto.Message, error) {
+	return &router.StrategyLeastPingConfig{ObserverTag: v.ObserverTag}, nil
+}
+
+type strategyRoundRobinConfig struct {
+	ObserverTag string `json:"observerTag"`
+}
+
+func (v *strategyRoundRobinConfig) Build() (proto.Message, error) {
+	return &router.StrategyRoundRobinConfig{ObserverTag: v.ObserverTag}, nil
 }
 
 type strategyLeastLoadConfig struct {
@@ -43,6 +61,8 @@ type strategyLeastLoadConfig struct {
 	MaxRTT duration.Duration `json:"maxRTT,omitempty"`
 	// acceptable failure rate
 	Tolerance float64 `json:"tolerance,omitempty"`
+	// observer tag
+	ObserverTag string `json:"observerTag"`
 }
 
 // healthCheckSettings holds settings for health Checker
@@ -76,11 +96,12 @@ func (h healthCheckSettings) Build() (proto.Message, error) {
 func (v *strategyLeastLoadConfig) Build() (proto.Message, error) {
 	config := &router.StrategyLeastLoadConfig{}
 	config.Costs = v.Costs
+	config.ObserverTag = v.ObserverTag
 	config.Tolerance = float32(v.Tolerance)
 	if config.Tolerance < 0 {
 		config.Tolerance = 0
 	}
-	if config.Tolerance > 1 {
+	if config.Tolerance > 1 || config.Tolerance == 0 {
 		config.Tolerance = 1
 	}
 	config.Expected = v.Expected
