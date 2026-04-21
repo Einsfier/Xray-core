@@ -53,7 +53,7 @@ func NewClassicNameServer(address net.Destination, dispatcher routing.Dispatcher
 		Interval: time.Minute,
 		Execute:  s.RequestsCleanup,
 	}
-	s.udpServer = udp.NewDispatcher(dispatcher, s.HandleResponse)
+	s.udpServer = udp.NewNoCacheDispatcher(dispatcher, s.HandleResponse, 1*time.Second)
 
 	errors.LogInfo(context.Background(), "DNS: created UDP client initialized for ", address.NetAddr())
 	return s
