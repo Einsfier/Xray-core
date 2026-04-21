@@ -21,10 +21,11 @@ import (
 type ResponseCallback func(ctx context.Context, packet *udp.Packet)
 
 type connEntry struct {
-	link   *transport.Link
-	timer  *signal.ActivityTimer
-	cancel context.CancelFunc
-	closed bool
+	link        *transport.Link
+	timer       *signal.ActivityTimer
+	cancel      context.CancelFunc
+	closed      bool
+	maxDeadline time.Time
 }
 
 func (c *connEntry) Close() error {
@@ -44,17 +45,27 @@ func (c *connEntry) terminate() {
 
 type Dispatcher struct {
 	sync.RWMutex
-	conn       *connEntry
-	dispatcher routing.Dispatcher
-	callback   ResponseCallback
-	callClose  func() error
-	closed     bool
+	conn          *connEntry
+	dispatcher    routing.Dispatcher
+	callback      ResponseCallback
+	callClose     func() error
+	closed        bool
+	toleranceTime time.Duration
+	connCreatedAt time.Time
 }
 
 func NewDispatcher(dispatcher routing.Dispatcher, callback ResponseCallback) *Dispatcher {
 	return &Dispatcher{
 		dispatcher: dispatcher,
 		callback:   callback,
+	}
+}
+
+func NewNoCacheDispatcher(dispatcher routing.Dispatcher, callback ResponseCallback, toleranceTime time.Duration) *Dispatcher {
+	return &Dispatcher{
+		dispatcher:    dispatcher,
+		callback:      callback,
+		toleranceTime: toleranceTime,
 	}
 }
 
@@ -79,6 +90,16 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest net.Destination) (*
 	if v.conn != nil {
 		if v.conn.closed {
 			v.conn = nil
+		} else if v.toleranceTime > 0 && time.Since(v.connCreatedAt) > v.toleranceTime {
+			// 连接超过容忍时间，脱管旧连接让其自然消亡，新建连接走负载均衡
+			oldConn := v.conn
+			if !oldConn.maxDeadline.IsZero() {
+				if remaining := time.Until(oldConn.maxDeadline) + v.toleranceTime; remaining > 0 {
+					oldConn.timer.SetTimeout(remaining)
+				}
+			}
+			// 没有 deadline 的情况不动 timer，保持原有 1 分钟 inactivity 超时
+			v.conn = nil
 		} else {
 			return v.conn, nil
 		}
@@ -101,6 +122,7 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest net.Destination) (*
 
 	entry.timer = signal.CancelAfterInactivity(ctx, entry.terminate, time.Minute)
 	v.conn = entry
+	v.connCreatedAt = time.Now()
 	go handleInput(ctx, entry, dest, v.callback, v.callClose)
 	return entry, nil
 }
@@ -114,6 +136,16 @@ func (v *Dispatcher) Dispatch(ctx context.Context, destination net.Destination, 
 		errors.LogInfoInner(ctx, err, "failed to get inbound")
 		return
 	}
+
+	// 更新 maxDeadline 用于脱管时计算旧连接存活时间
+	if deadline, ok := ctx.Deadline(); ok {
+		v.Lock()
+		if deadline.After(conn.maxDeadline) {
+			conn.maxDeadline = deadline
+		}
+		v.Unlock()
+	}
+
 	outputStream := conn.link.Writer
 	if outputStream != nil {
 		if err := outputStream.WriteMultiBuffer(buf.MultiBuffer{payload}); err != nil {
