@@ -295,6 +295,10 @@ func (m *DynamicGeoIPMatcher) updateIPSet(is4Modified, is6Modified bool) {
 	}
 }
 
+func (m *DynamicGeoIPMatcher) DynamicRuleName() string {
+	return m.Name
+}
+
 // AddIPNet implements routing.DynamicRuleIP.
 func (m *DynamicGeoIPMatcher) AddIPNet(ipNets ...net.IPNet) {
 	var is4Modified, is6Modified bool

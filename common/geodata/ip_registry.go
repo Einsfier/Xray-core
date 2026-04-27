@@ -7,6 +7,7 @@ import (
 
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/features/routing"
 )
 
 type IPRegistry struct {
@@ -95,6 +96,41 @@ func (d *DynamicIPMatcher) Matches(ips []net.IP) bool {
 // FilterIPs implements IPMatcher.
 func (d *DynamicIPMatcher) FilterIPs(ips []net.IP) (matched []net.IP, unmatched []net.IP) {
 	return d.state.Load().matcher.FilterIPs(ips)
+}
+
+func (d *DynamicIPMatcher) DynamicRuleName() string {
+	if dm, ok := d.state.Load().matcher.(routing.DynamicRuleIP); ok {
+		return dm.DynamicRuleName()
+	}
+	return ""
+}
+
+func (d *DynamicIPMatcher) MatchSrc(src, dst net.IP) bool {
+	if dm, ok := d.state.Load().matcher.(routing.DynamicRuleIP); ok {
+		return dm.MatchSrc(src, dst)
+	}
+	return false
+}
+
+func (d *DynamicIPMatcher) AddIPNet(ipNets ...net.IPNet) {
+	if dm, ok := d.state.Load().matcher.(routing.DynamicRuleIP); ok {
+		dm.AddIPNet(ipNets...)
+	}
+}
+func (d *DynamicIPMatcher) RemoveIPNet(ipNets ...net.IPNet) {
+	if dm, ok := d.state.Load().matcher.(routing.DynamicRuleIP); ok {
+		dm.RemoveIPNet(ipNets...)
+	}
+}
+func (d *DynamicIPMatcher) AddIPNetConnTrack(src net.IP, dsts ...net.IPNet) {
+	if dm, ok := d.state.Load().matcher.(routing.DynamicRuleIP); ok {
+		dm.AddIPNetConnTrack(src, dsts...)
+	}
+}
+func (d *DynamicIPMatcher) RemoveIPNetConnTrack(src net.IP, dsts ...net.IPNet) {
+	if dm, ok := d.state.Load().matcher.(routing.DynamicRuleIP); ok {
+		dm.RemoveIPNetConnTrack(src, dsts...)
+	}
 }
 
 // ToggleReverse implements IPMatcher.

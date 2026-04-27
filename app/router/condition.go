@@ -91,12 +91,14 @@ func NewIPMatcher(rules []*geodata.IPRule, asType MatcherAsType) (*IPMatcher, er
 	return &IPMatcher{matcher: m, asType: asType}, nil
 }
 
+var _ routing.DynamicRuleIP = (*geodata.DynamicIPMatcher)(nil)
+
 // Apply implements Condition.
 func (m *IPMatcher) Apply(ctx routing.Context) bool {
 	sCtx, sOK := ctx.(dns.RoutingContextWithSkipDynamicRule)
-	dynIPMatcher, dOK := m.matcher.(*geodata.DynamicGeoIPMatcher)
+	dynIPMatcher, dOK := m.matcher.(routing.DynamicRuleIP)
 	// avoid unexpected dns circuit lookup hit
-	if dOK && sOK && sCtx.GetSkipDynamicRuleIP(dynIPMatcher.Name) {
+	if dOK && sOK && sCtx.GetSkipDynamicRuleIP(dynIPMatcher.DynamicRuleName()) {
 		return false
 	}
 	var ips []net.IP
@@ -114,7 +116,7 @@ func (m *IPMatcher) Apply(ctx routing.Context) bool {
 
 	// conn-track matching works on dest selection
 	if m.asType == MatcherAsType_Target && dOK &&
-		strings.HasPrefix(dynIPMatcher.Name, strings.ToUpper(dns_feature.DynamicIPSetDNSCircuitConnTrackDestPrefix)) {
+		strings.HasPrefix(dynIPMatcher.DynamicRuleName(), strings.ToUpper(dns_feature.DynamicIPSetDNSCircuitConnTrackDestPrefix)) {
 		for _, dstIP := range ctx.GetTargetIPs() {
 			for _, srcIP := range ctx.GetSourceIPs() {
 				if dynIPMatcher.MatchSrc(srcIP, dstIP) {
