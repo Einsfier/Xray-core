@@ -13,6 +13,8 @@ type RouterWithDynamicRule interface {
 }
 
 type DynamicRuleIP interface {
+	DynamicRuleName() string
+	MatchSrc(src, dst net.IP) bool
 	AddIPNet(ipNets ...net.IPNet)
 	RemoveIPNet(ipNets ...net.IPNet)
 	AddIPNetConnTrack(src net.IP, dsts ...net.IPNet)
