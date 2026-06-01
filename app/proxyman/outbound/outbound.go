@@ -180,6 +180,17 @@ func (m *Manager) Select(selectors []string) []string {
 			}
 		}
 	}
+	// 如果结果为空降级到使用contains再搜索一次
+	if len(tags) == 0 {
+		for tag := range m.taggedHandler {
+			for _, selector := range selectors {
+				if strings.Contains(tag, selector) {
+					tags = append(tags, tag)
+					break
+				}
+			}
+		}
+	}
 
 	sort.Strings(tags)
 	m.tagsCache.Store(key, tags)
