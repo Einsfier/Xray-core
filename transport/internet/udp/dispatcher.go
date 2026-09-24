@@ -52,6 +52,9 @@ type Dispatcher struct {
 	closed        bool
 	toleranceTime time.Duration
 	connCreatedAt time.Time
+	// sharedConn 表示一条连接被多次互不相关的请求共用，因此它的生命周期不能
+	// 跟着创建它的那次请求走。详见 getInboundRay。
+	sharedConn bool
 }
 
 func NewDispatcher(dispatcher routing.Dispatcher, callback ResponseCallback) *Dispatcher {
@@ -61,11 +64,18 @@ func NewDispatcher(dispatcher routing.Dispatcher, callback ResponseCallback) *Di
 	}
 }
 
+// NewNoCacheDispatcher returns a Dispatcher that stops reusing a connection once it
+// is older than toleranceTime, so a long-lived stream of requests keeps going through
+// route selection instead of pinning itself to whichever outbound it first picked.
+//
+// Its connections are shared by unrelated requests, so they are detached from the
+// context of the request that happened to create them.
 func NewNoCacheDispatcher(dispatcher routing.Dispatcher, callback ResponseCallback, toleranceTime time.Duration) *Dispatcher {
 	return &Dispatcher{
 		dispatcher:    dispatcher,
 		callback:      callback,
 		toleranceTime: toleranceTime,
+		sharedConn:    true,
 	}
 }
 
@@ -96,6 +106,10 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest net.Destination) (*
 			if !oldConn.maxDeadline.IsZero() {
 				if remaining := time.Until(oldConn.maxDeadline) + v.toleranceTime; remaining > 0 {
 					oldConn.timer.SetTimeout(remaining)
+				} else {
+					// deadline 已过，用过这条连接的请求都已放弃等待，没有在途响应
+					// 需要保留。不主动关的话它会退回 1 分钟 inactivity 白等。
+					oldConn.Close()
 				}
 			}
 			// 没有 deadline 的情况不动 timer，保持原有 1 分钟 inactivity 超时
@@ -107,9 +121,19 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest net.Destination) (*
 
 	errors.LogInfo(ctx, "establishing new connection for ", dest)
 
-	ctx, cancel := context.WithCancel(ctx)
+	// A shared connection outlives the request that created it, so it must not inherit
+	// that request's cancellation: the cancel that fires when the request returns would
+	// travel down the context tree and tear the connection down, discarding the replies
+	// still in flight for every other request using it. Values are kept, as routing
+	// depends on them; only the cancellation is cut. Such a connection is closed by its
+	// ActivityTimer or by RemoveRay instead.
+	connCtx := ctx
+	if v.sharedConn {
+		connCtx = context.WithoutCancel(ctx)
+	}
+	connCtx, cancel := context.WithCancel(connCtx)
 
-	link, err := v.dispatcher.Dispatch(ctx, dest)
+	link, err := v.dispatcher.Dispatch(connCtx, dest)
 	if err != nil {
 		cancel()
 		return nil, errors.New("failed to dispatch request to ", dest).Base(err)
@@ -120,10 +144,10 @@ func (v *Dispatcher) getInboundRay(ctx context.Context, dest net.Destination) (*
 		cancel: cancel,
 	}
 
-	entry.timer = signal.CancelAfterInactivity(ctx, entry.terminate, time.Minute)
+	entry.timer = signal.CancelAfterInactivity(connCtx, entry.terminate, time.Minute)
 	v.conn = entry
 	v.connCreatedAt = time.Now()
-	go handleInput(ctx, entry, dest, v.callback, v.callClose)
+	go handleInput(connCtx, entry, dest, v.callback, v.callClose)
 	return entry, nil
 }
 
