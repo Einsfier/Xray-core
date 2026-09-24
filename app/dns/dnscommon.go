@@ -183,6 +183,37 @@ func buildReqMsgs(domain string, option dns_feature.IPOption, reqIDGen func() ui
 	return reqs, nil
 }
 
+// buildRawReqMsg builds a query for a record type that is not resolved into IPs,
+// such as SRV. EDNS0 is always requested, even when genEDNS0Options has nothing to
+// add: an answer carrying several targets easily outgrows the 512 byte limit, and
+// the truncation that follows would send the client retrying over TCP, escaping any
+// DNS routing rule that only covers UDP.
+func buildRawReqMsg(fqdn string, qType dnsmessage.Type, id uint16, clientIP net.IP, padding int) (*dnsmessage.Message, error) {
+	name, err := dnsmessage.NewName(fqdn)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := genEDNS0Options(clientIP, padding)
+	if opts == nil {
+		opts = new(dnsmessage.Resource)
+		common.Must(opts.Header.SetEDNS0(1350, 0xfe00, true))
+		opts.Body = &dnsmessage.OPTResource{}
+	}
+
+	msg := new(dnsmessage.Message)
+	msg.Header.ID = id
+	msg.Header.RecursionDesired = true
+	msg.Questions = []dnsmessage.Question{{
+		Name:  name,
+		Type:  qType,
+		Class: dnsmessage.ClassINET,
+	}}
+	msg.Additionals = append(msg.Additionals, *opts)
+
+	return msg, nil
+}
+
 // parseResponse parses DNS answers from the returned payload
 func parseResponse(payload []byte) (*IPRecord, error) {
 	var parser dnsmessage.Parser

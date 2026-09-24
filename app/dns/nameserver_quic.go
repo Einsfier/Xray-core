@@ -214,6 +214,9 @@ func (s *QUICNameServer) QueryIP(ctx context.Context, domain string, option dns_
 	return queryIP(ctx, s, domain, option)
 }
 
+// TODO: implement RawServer so forwarded non-IP queries can use DoQ as well. Until
+// then a query landing here falls through to the next name server in order.
+
 func isActive(s *quic.Conn) bool {
 	select {
 	case <-s.Context().Done():

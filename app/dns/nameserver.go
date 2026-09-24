@@ -14,6 +14,7 @@ import (
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/routing"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // Server is the interface for Name Server.
@@ -26,6 +27,17 @@ type Server interface {
 	// QueryIP sends IP queries to its configured server.
 	QueryIP(ctx context.Context, domain string, option dns.IPOption) ([]net.IP, uint32, error)
 }
+
+// RawServer is an optional interface for name servers able to forward a query for a
+// record type that does not resolve into IPs. The system resolver and FakeDNS cannot,
+// so they do not implement it and are skipped when such a query arrives.
+type RawServer interface {
+	// QueryRaw asks the configured server for fqdn of the given type and returns the
+	// raw wire format response.
+	QueryRaw(ctx context.Context, fqdn string, qType dnsmessage.Type) ([]byte, error)
+}
+
+var errRawUnsupported = errors.New("name server does not support forwarding non-IP queries")
 
 // Client is the interface for DNS client.
 type Client struct {
@@ -225,6 +237,23 @@ func (c *Client) QueryIP(ctx context.Context, domain string, option dns.IPOption
 	}
 
 	return ips, ttl, nil
+}
+
+// QueryRaw forwards a query to the name server. The client's tag is attached just as
+// QueryIP does, so routing rules keyed on the DNS server's inboundTag keep applying.
+// The IP filters (expectedIPs, unexpectedIPs) and the query strategy are skipped:
+// neither has any meaning for a record that carries no IP.
+func (c *Client) QueryRaw(ctx context.Context, fqdn string, qType dnsmessage.Type) ([]byte, error) {
+	server, ok := c.server.(RawServer)
+	if !ok {
+		return nil, errRawUnsupported
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.timeoutMs)
+	defer cancel()
+	ctx = session.ContextWithInbound(ctx, &session.Inbound{Tag: c.tag})
+
+	return server.QueryRaw(ctx, fqdn, qType)
 }
 
 func ResolveIpOptionOverride(queryStrategy QueryStrategy, ipOption dns.IPOption) dns.IPOption {

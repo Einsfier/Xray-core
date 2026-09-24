@@ -16,6 +16,7 @@ import (
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/common/utils"
 	"github.com/xtls/xray-core/features/dns"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // DNS is a DNS rely server.
@@ -262,6 +263,135 @@ func (s *DNS) LookupIP(domain string, option dns.IPOption) ([]net.IP, uint32, er
 	} else {
 		return s.serialQuery(domain, option)
 	}
+}
+
+// LookupRaw implements dns.RawClient.
+//
+// The query is forwarded to the name servers chosen by the domain rules, exactly as
+// LookupIP picks them, and the upstream response is returned untouched. Nothing is
+// cached: these records are queried rarely and clients honour their TTL on their own,
+// so a cache would buy little for the expiry bookkeeping it costs. Static hosts are
+// not consulted either, as their entries only hold IPs.
+func (s *DNS) LookupRaw(ctx context.Context, domain string, qType uint16) ([]byte, error) {
+	// The FQDN form is what goes on the wire, while the rules match without the
+	// trailing dot. Case is preserved so a DNS-0x20 capitalized name is echoed back.
+	fqdn := Fqdn(domain)
+	domain = strings.TrimSuffix(domain, ".")
+	if domain == "" {
+		return nil, errors.New("empty domain name")
+	}
+
+	// The query runs on s.ctx, which is where the name servers find the core instance
+	// when they detach their dispatch context; LookupIP, taking no context at all,
+	// relies on the same one. The caller's context is read for cancellation only, so
+	// it need not carry the instance and a plain context.Background() will do.
+	queryCtx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	defer context.AfterFunc(ctx, cancel)()
+
+	clients := s.sortClients(domain)
+	if s.enableParallelQuery {
+		return s.parallelLookupRaw(queryCtx, fqdn, domain, dnsmessage.Type(qType), clients)
+	}
+	return s.serialLookupRaw(queryCtx, fqdn, domain, dnsmessage.Type(qType), clients)
+}
+
+func mergeRawQueryErrors(domain string, qType dnsmessage.Type, errs []error) error {
+	if len(errs) == 0 {
+		return errors.New("no DNS client available to forward ", qType, " query for domain ", domain)
+	}
+	return errors.New("failed to forward ", qType, " query for domain ", domain).Base(errors.Combine(errs...))
+}
+
+func (s *DNS) serialLookupRaw(ctx context.Context, fqdn, domain string, qType dnsmessage.Type, clients []*Client) ([]byte, error) {
+	var errs []error
+	for _, client := range clients {
+		resp, err := client.QueryRaw(ctx, fqdn, qType)
+		if err == nil {
+			return resp, nil
+		}
+		s.logRawFailure(err, domain, qType, client)
+		errs = append(errs, err)
+	}
+	return nil, mergeRawQueryErrors(domain, qType, errs)
+}
+
+// parallelLookupRaw races the name servers the same way parallelQuery does: clients
+// sharing a policyID are queried at once, while a lower-priority group only counts once
+// every server above it has failed. Unlike the IP path the losing queries are dropped
+// rather than left to finish, as there is no cache for their answers to land in.
+func (s *DNS) parallelLookupRaw(ctx context.Context, fqdn, domain string, qType dnsmessage.Type, clients []*Client) ([]byte, error) {
+	if len(clients) == 0 {
+		return nil, mergeRawQueryErrors(domain, qType, nil)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	resultsChan := make(chan rawQueryResult, len(clients))
+	for i, client := range clients {
+		go func(i int, c *Client) {
+			resp, err := c.QueryRaw(ctx, fqdn, qType)
+			resultsChan <- rawQueryResult{resp: resp, err: err, index: i}
+		}(i, client)
+	}
+
+	groups, groupOf := makeGroups(clients)
+	results := make([]*rawQueryResult, len(clients))
+	pending := make([]int, len(groups))
+	for gi, g := range groups {
+		pending[gi] = g.end - g.start + 1
+	}
+
+	var errs []error
+	nextGroup := 0
+	for range clients {
+		result := <-resultsChan
+		results[result.index] = &result
+
+		pending[groupOf[result.index]]--
+
+		for nextGroup < len(groups) {
+			g := groups[nextGroup]
+
+			// group race, first answer wins
+			for j := g.start; j <= g.end; j++ {
+				if r := results[j]; r != nil && r.err == nil {
+					return r.resp, nil
+				}
+			}
+
+			// current group is incomplete and no one succeeded -> keep waiting
+			if pending[nextGroup] > 0 {
+				break
+			}
+
+			// all failed -> log and move on to the next group
+			for j := g.start; j <= g.end; j++ {
+				s.logRawFailure(results[j].err, domain, qType, clients[j])
+				errs = append(errs, results[j].err)
+			}
+			nextGroup++
+		}
+	}
+
+	return nil, mergeRawQueryErrors(domain, qType, errs)
+}
+
+// logRawFailure reports a forwarding failure, staying quiet about a name server that
+// simply cannot forward: that is a property of its type, not a fault worth logging.
+func (s *DNS) logRawFailure(err error, domain string, qType dnsmessage.Type, client *Client) {
+	if go_errors.Is(err, errRawUnsupported) {
+		errors.LogDebug(s.ctx, "skip ", qType, " query for domain ", domain, " at server ", client.Name(), ": ", err)
+		return
+	}
+	errors.LogInfoInner(s.ctx, err, "failed to forward ", qType, " query for domain ", domain, " at server ", client.Name())
+}
+
+type rawQueryResult struct {
+	resp  []byte
+	err   error
+	index int
 }
 
 func (s *DNS) sortClients(domain string) []*Client {
