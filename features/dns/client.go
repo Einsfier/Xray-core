@@ -1,6 +1,8 @@
 package dns
 
 import (
+	"context"
+
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/serial"
@@ -29,6 +31,18 @@ type Client interface {
 // xray:api:beta
 func ClientType() interface{} {
 	return (*Client)(nil)
+}
+
+// RawClient is an optional extension of Client for record types that do not resolve
+// into IPs, such as SRV. The query is forwarded to the name servers picked by the
+// domain rules rather than answered locally, so the upstream response is handed back
+// as raw wire format. Callers must type assert for it.
+//
+// xray:api:beta
+type RawClient interface {
+	// LookupRaw forwards a query for domain of the given type and returns the raw
+	// response. The transaction ID of the response is unrelated to any client's.
+	LookupRaw(ctx context.Context, domain string, qType uint16) ([]byte, error)
 }
 
 // ErrEmptyResponse indicates that DNS query succeeded but no answer was returned.

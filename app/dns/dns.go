@@ -16,6 +16,7 @@ import (
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/common/utils"
 	"github.com/xtls/xray-core/features/dns"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // DNS is a DNS rely server.
@@ -262,6 +263,40 @@ func (s *DNS) LookupIP(domain string, option dns.IPOption) ([]net.IP, uint32, er
 	} else {
 		return s.serialQuery(domain, option)
 	}
+}
+
+// LookupRaw implements dns.RawClient.
+//
+// The query is forwarded to the name servers chosen by the domain rules, tried in
+// order until one answers, and the upstream response is returned untouched. Nothing
+// is cached: these records are queried rarely and clients honour their TTL on their
+// own, so a cache would buy little for the expiry bookkeeping it costs. Static hosts
+// are not consulted either, as their entries only hold IPs.
+func (s *DNS) LookupRaw(ctx context.Context, domain string, qType uint16) ([]byte, error) {
+	// The FQDN form is what goes on the wire, while the rules match without the
+	// trailing dot. Case is preserved so a DNS-0x20 capitalized name is echoed back.
+	fqdn := Fqdn(domain)
+	domain = strings.TrimSuffix(domain, ".")
+	if domain == "" {
+		return nil, errors.New("empty domain name")
+	}
+
+	var errs []error
+	for _, client := range s.sortClients(domain) {
+		resp, err := client.QueryRaw(ctx, fqdn, dnsmessage.Type(qType))
+		if err == nil {
+			return resp, nil
+		}
+		if !go_errors.Is(err, errRawUnsupported) {
+			errors.LogInfoInner(s.ctx, err, "failed to forward type ", qType, " query for domain ", domain, " at server ", client.Name())
+		}
+		errs = append(errs, err)
+	}
+
+	if len(errs) == 0 {
+		return nil, errors.New("no DNS client available to forward type ", qType, " query for domain ", domain)
+	}
+	return nil, errors.New("failed to forward type ", qType, " query for domain ", domain).Base(errors.Combine(errs...))
 }
 
 func (s *DNS) sortClients(domain string) []*Client {
