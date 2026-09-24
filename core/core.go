@@ -55,6 +55,9 @@ func init() {
 	if isDirty && foundBuild {
 		build += "-dirty"
 	}
+	build += "+DnsCircuit"
+	intro += "\nThis is a modified Xray core by Einsfier." +
+		"\nSee https://github.com/Einsfier/Xray-core"
 }
 
 // Version returns Xray's version as a string, in the form of "x.y.z" where x, y and z are numbers.
