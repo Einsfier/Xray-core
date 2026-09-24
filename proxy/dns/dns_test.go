@@ -29,6 +29,8 @@ type staticHandler struct{}
 func (*staticHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	ans := new(dns.Msg)
 	ans.Id = r.Id
+	// Real servers echo the question back, and a forwarded reply carries it through.
+	ans.Question = r.Question
 
 	var clientIP net.IP
 
@@ -69,6 +71,16 @@ func (*staticHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 		case q.Name == "notexist.google.com." && q.Qtype == dns.TypeAAAA:
 			ans.MsgHdr.Rcode = dns.RcodeNameError
+
+		case q.Name == "_sip._tcp.google.com." && q.Qtype == dns.TypeSRV:
+			rr, err := dns.NewRR("_sip._tcp.google.com. 30 IN SRV 10 60 5060 sipserver.google.com.")
+			common.Must(err)
+			ans.Answer = append(ans.Answer, rr)
+			// Glue for the target. Forwarding must drop it, or a client could reach
+			// the target without ever querying its A record.
+			glue, err := dns.NewRR("sipserver.google.com. 30 IN A 1.2.3.4")
+			common.Must(err)
+			ans.Extra = append(ans.Extra, glue)
 		}
 	}
 	w.WriteMsg(ans)
@@ -191,6 +203,222 @@ func TestUDPDNSTunnel(t *testing.T) {
 		if in.Rcode != dns.RcodeNameError {
 			t.Error("expected NameError, but got ", in.Rcode)
 		}
+	}
+}
+
+// TestUDPDNSTunnelSRV covers the forwarding path taken by record types the internal
+// DNS cannot resolve: SRV is answered from upstream, while a type outside the default
+// hijack policy is still answered locally as NODATA.
+func TestUDPDNSTunnelSRV(t *testing.T) {
+	port := udp.PickPort()
+
+	dnsServer := dns.Server{
+		Addr:    "127.0.0.1:" + port.String(),
+		Net:     "udp",
+		Handler: &staticHandler{},
+		UDPSize: 1200,
+	}
+	defer dnsServer.Shutdown()
+
+	go dnsServer.ListenAndServe()
+	time.Sleep(time.Second)
+
+	serverPort := udp.PickPort()
+	config := &core.Config{
+		App: []*serial.TypedMessage{
+			serial.ToTypedMessage(&dnsapp.Config{
+				NameServer: []*dnsapp.NameServer{
+					{
+						Address: &net.Endpoint{
+							Network: net.Network_UDP,
+							Address: &net.IPOrDomain{
+								Address: &net.IPOrDomain_Ip{
+									Ip: []byte{127, 0, 0, 1},
+								},
+							},
+							Port: uint32(port),
+						},
+					},
+				},
+			}),
+			serial.ToTypedMessage(&dispatcher.Config{}),
+			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
+			serial.ToTypedMessage(&proxyman.InboundConfig{}),
+			serial.ToTypedMessage(&policy.Config{}),
+		},
+		Inbound: []*core.InboundHandlerConfig{
+			{
+				ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
+					RewriteAddress:  net.NewIPOrDomain(net.LocalHostIP),
+					RewritePort:     uint32(port),
+					AllowedNetworks: []net.Network{net.Network_UDP},
+				}),
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{net.SinglePortRange(serverPort)}},
+					Listen:   net.NewIPOrDomain(net.LocalHostIP),
+				}),
+			},
+		},
+		Outbound: []*core.OutboundHandlerConfig{
+			{
+				ProxySettings: serial.ToTypedMessage(&dns_proxy.Config{}),
+			},
+		},
+	}
+
+	v, err := core.New(config)
+	common.Must(err)
+	common.Must(v.Start())
+	defer v.Close()
+
+	// SRV is forwarded and the upstream answer is handed back.
+	{
+		m1 := new(dns.Msg)
+		m1.Id = dns.Id()
+		m1.RecursionDesired = true
+		m1.Question = []dns.Question{{Name: "_sip._tcp.google.com.", Qtype: dns.TypeSRV, Qclass: dns.ClassINET}}
+
+		c := new(dns.Client)
+		c.Timeout = 10 * time.Second
+		in, _, err := c.Exchange(m1, "127.0.0.1:"+strconv.Itoa(int(serverPort)))
+		common.Must(err)
+
+		if in.Id != m1.Id {
+			t.Error("id: got ", in.Id, " want ", m1.Id)
+		}
+		if len(in.Answer) != 1 {
+			t.Fatal("len(answer): ", len(in.Answer))
+		}
+		rr, ok := in.Answer[0].(*dns.SRV)
+		if !ok {
+			t.Fatal("not SRV record: ", in.Answer[0])
+		}
+		if rr.Target != "sipserver.google.com." {
+			t.Error("target: ", rr.Target)
+		}
+		if rr.Port != 5060 {
+			t.Error("port: ", rr.Port)
+		}
+		// The glue record and the OPT we added upstream both live in the additional
+		// section, and forwarding drops it wholesale.
+		if len(in.Extra) != 0 {
+			t.Error("len(extra): ", len(in.Extra), " ", in.Extra)
+		}
+	}
+
+	// A type outside the default hijack policy is answered locally as NODATA, with a
+	// SOA so the client can negative cache it.
+	{
+		m1 := new(dns.Msg)
+		m1.Id = dns.Id()
+		m1.RecursionDesired = true
+		m1.Question = []dns.Question{{Name: "google.com.", Qtype: dns.TypeTXT, Qclass: dns.ClassINET}}
+
+		c := new(dns.Client)
+		c.Timeout = 10 * time.Second
+		in, _, err := c.Exchange(m1, "127.0.0.1:"+strconv.Itoa(int(serverPort)))
+		common.Must(err)
+
+		if in.Rcode != dns.RcodeSuccess {
+			t.Error("rcode: ", in.Rcode)
+		}
+		if len(in.Answer) != 0 {
+			t.Error("len(answer): ", len(in.Answer))
+		}
+		if len(in.Ns) != 1 {
+			t.Fatal("len(ns): ", len(in.Ns))
+		}
+		if _, ok := in.Ns[0].(*dns.SOA); !ok {
+			t.Error("not SOA record: ", in.Ns[0])
+		}
+	}
+}
+
+// TestUDPDNSTunnelSRVParallel checks that forwarded queries honour enableParallelQuery:
+// the first name server is a port nobody listens on, so a serial walk would stall on it
+// until the per-client timeout, while racing the group lets the second one answer.
+func TestUDPDNSTunnelSRVParallel(t *testing.T) {
+	deadPort := udp.PickPort()
+	port := udp.PickPort()
+
+	dnsServer := dns.Server{
+		Addr:    "127.0.0.1:" + port.String(),
+		Net:     "udp",
+		Handler: &staticHandler{},
+		UDPSize: 1200,
+	}
+	defer dnsServer.Shutdown()
+
+	go dnsServer.ListenAndServe()
+	time.Sleep(time.Second)
+
+	localhost := &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}}
+	serverPort := udp.PickPort()
+	config := &core.Config{
+		App: []*serial.TypedMessage{
+			serial.ToTypedMessage(&dnsapp.Config{
+				EnableParallelQuery: true,
+				NameServer: []*dnsapp.NameServer{
+					{
+						Address: &net.Endpoint{Network: net.Network_UDP, Address: localhost, Port: uint32(deadPort)},
+					},
+					{
+						Address: &net.Endpoint{Network: net.Network_UDP, Address: localhost, Port: uint32(port)},
+					},
+				},
+			}),
+			serial.ToTypedMessage(&dispatcher.Config{}),
+			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
+			serial.ToTypedMessage(&proxyman.InboundConfig{}),
+			serial.ToTypedMessage(&policy.Config{}),
+		},
+		Inbound: []*core.InboundHandlerConfig{
+			{
+				ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
+					RewriteAddress:  net.NewIPOrDomain(net.LocalHostIP),
+					RewritePort:     uint32(port),
+					AllowedNetworks: []net.Network{net.Network_UDP},
+				}),
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{net.SinglePortRange(serverPort)}},
+					Listen:   net.NewIPOrDomain(net.LocalHostIP),
+				}),
+			},
+		},
+		Outbound: []*core.OutboundHandlerConfig{
+			{
+				ProxySettings: serial.ToTypedMessage(&dns_proxy.Config{}),
+			},
+		},
+	}
+
+	v, err := core.New(config)
+	common.Must(err)
+	common.Must(v.Start())
+	defer v.Close()
+
+	m1 := new(dns.Msg)
+	m1.Id = dns.Id()
+	m1.RecursionDesired = true
+	m1.Question = []dns.Question{{Name: "_sip._tcp.google.com.", Qtype: dns.TypeSRV, Qclass: dns.ClassINET}}
+
+	c := new(dns.Client)
+	c.Timeout = 10 * time.Second
+
+	start := time.Now()
+	in, _, err := c.Exchange(m1, "127.0.0.1:"+strconv.Itoa(int(serverPort)))
+	common.Must(err)
+	elapsed := time.Since(start)
+
+	if len(in.Answer) != 1 {
+		t.Fatal("len(answer): ", len(in.Answer))
+	}
+	if _, ok := in.Answer[0].(*dns.SRV); !ok {
+		t.Fatal("not SRV record: ", in.Answer[0])
+	}
+	// The default per-client timeout is 4s; racing should beat it comfortably.
+	if elapsed > 3*time.Second {
+		t.Error("answer took ", elapsed, ", the dead server was likely awaited serially")
 	}
 }
 

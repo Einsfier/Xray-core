@@ -17,6 +17,7 @@ import (
 	dns_feature "github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport/internet"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // TCPNameServer implemented DNS over TCP (RFC7766).
@@ -239,6 +240,73 @@ func (s *TCPNameServer) sendQuery(ctx context.Context, noResponseErrCh chan<- er
 			s.cacheController.updateRecord(r, rec)
 		}(req)
 	}
+}
+
+// QueryRaw implements RawServer.
+func (s *TCPNameServer) QueryRaw(ctx context.Context, fqdn string, qType dnsmessage.Type) ([]byte, error) {
+	errors.LogInfo(ctx, s.Name(), " forwarding ", qType, " query for: ", fqdn)
+
+	msg, err := buildRawReqMsg(fqdn, qType, s.newReqID(), s.clientIP, 0)
+	if err != nil {
+		return nil, err
+	}
+	b, err := dns.PackMessage(msg)
+	if err != nil {
+		return nil, errors.New("failed to pack dns query").Base(err)
+	}
+	defer b.Release()
+
+	dnsCtx := ctx
+	if inbound := session.InboundFromContext(ctx); inbound != nil {
+		dnsCtx = session.ContextWithInbound(dnsCtx, inbound)
+	}
+	dnsCtx = session.ContextWithContent(dnsCtx, &session.Content{
+		Protocol:       "dns",
+		SkipDNSResolve: true,
+	})
+
+	return s.exchange(dnsCtx, b.Bytes())
+}
+
+// exchange sends one length-prefixed query over a fresh connection and reads the
+// length-prefixed response back. sendQuery inlines the same framing, but reports its
+// errors through a channel instead of returning them.
+func (s *TCPNameServer) exchange(ctx context.Context, payload []byte) ([]byte, error) {
+	conn, err := s.dial(ctx)
+	if err != nil {
+		return nil, errors.New("failed to dial nameserver").Base(err)
+	}
+	defer conn.Close()
+
+	reqBuf := buf.New()
+	defer reqBuf.Release()
+	if err := binary.Write(reqBuf, binary.BigEndian, uint16(len(payload))); err != nil {
+		return nil, err
+	}
+	if _, err := reqBuf.Write(payload); err != nil {
+		return nil, err
+	}
+	if _, err := conn.Write(reqBuf.Bytes()); err != nil {
+		return nil, errors.New("failed to send query").Base(err)
+	}
+
+	respBuf := buf.New()
+	defer respBuf.Release()
+	if n, err := respBuf.ReadFullFrom(conn, 2); err != nil && n == 0 {
+		return nil, errors.New("failed to read response length").Base(err)
+	}
+	length := int32(binary.BigEndian.Uint16(respBuf.Bytes()))
+	if length > buf.Size {
+		return nil, errors.New("response size too large: ", length)
+	}
+	respBuf.Clear()
+	if n, err := respBuf.ReadFullFrom(conn, length); err != nil && n == 0 {
+		return nil, errors.New("failed to read response").Base(err)
+	}
+
+	resp := make([]byte, respBuf.Len())
+	copy(resp, respBuf.Bytes())
+	return resp, nil
 }
 
 // QueryIP implements Server.

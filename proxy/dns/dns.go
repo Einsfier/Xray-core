@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"encoding/binary"
 	go_errors "errors"
 	"io"
 	"strings"
@@ -74,6 +75,7 @@ type ownLinkVerifier interface {
 
 type Handler struct {
 	client          dns.Client
+	rawClient       dns.RawClient
 	observers       map[string]proxy.DNSOutBoundNoticeFn
 	fdns            dns.FakeDNSEngine
 	ownLinkVerifier ownLinkVerifier
@@ -89,6 +91,10 @@ func (h *Handler) Init(config *Config, dnsClient dns.Client, policyManager polic
 
 	if v, ok := dnsClient.(ownLinkVerifier); ok {
 		h.ownLinkVerifier = v
+	}
+
+	if v, ok := dnsClient.(dns.RawClient); ok {
+		h.rawClient = v
 	}
 
 	if config.RewriteServer != nil {
@@ -148,7 +154,8 @@ func (h *Handler) applyRules(qType dnsmessage.Type, domain string) (RuleAction, 
 			return r.action, r.rCode
 		}
 	}
-	if qType == dnsmessage.TypeA || qType == dnsmessage.TypeAAAA {
+	switch qType {
+	case dnsmessage.TypeA, dnsmessage.TypeAAAA, dnsmessage.TypeSRV:
 		return RuleAction_Hijack, dnsmessage.RCodeSuccess
 	}
 	return RuleAction_Return, dnsmessage.RCodeSuccess
@@ -268,13 +275,19 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, d internet.
 				}
 			case RuleAction_Hijack:
 				b.Release()
-				if qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA {
-					errors.LogError(ctx, "can only hijack A/AAAA records")
+				switch qType {
+				case dnsmessage.TypeA, dnsmessage.TypeAAAA:
+					go h.handleIPQuery(ctx, id, qType, domain, writer, timer)
+				case dnsmessage.TypeSRV:
+					// Records that carry no IP cannot be answered from the IP cache,
+					// so they are forwarded to whichever name server the domain rules
+					// select and the upstream reply is passed through.
+					go h.handleRawQuery(ctx, id, qType, domain, writer, timer)
+				default:
+					errors.LogError(ctx, "can only hijack A/AAAA/SRV records")
 					if err := h.rejectNonIPQuery(id, qType, domain, writer, rCode); err != nil {
 						return err
 					}
-				} else {
-					go h.handleIPQuery(ctx, id, qType, domain, writer, timer)
 				}
 			case RuleAction_Direct:
 				if err := connWriter.WriteMessage(b); err != nil {
@@ -395,11 +408,106 @@ func (h *Handler) handleIPQuery(ctx context.Context, id uint16, qType dnsmessage
 	}
 }
 
+// handleRawQuery forwards a query the internal DNS cannot answer and writes the
+// upstream reply back to the client. A failure is reported as NODATA rather than left
+// unanswered, so the client stops waiting instead of timing out.
+func (h *Handler) handleRawQuery(ctx context.Context, id uint16, qType dnsmessage.Type, domain string, writer dns_proto.MessageWriter, timer *signal.ActivityTimer) {
+	noData := func() {
+		if err := h.rejectNonIPQuery(id, qType, domain, writer, dnsmessage.RCodeSuccess); err != nil {
+			errors.LogInfoInner(ctx, err, "write NODATA answer")
+			timer.SetTimeout(0)
+		}
+	}
+
+	if h.rawClient == nil {
+		errors.LogError(ctx, "DNS client cannot forward type ", qType, " queries")
+		noData()
+		return
+	}
+
+	resp, err := h.rawClient.LookupRaw(ctx, domain, uint16(qType))
+	if err != nil {
+		errors.LogInfoInner(ctx, err, "failed to forward type ", qType, " query for domain ", domain)
+		noData()
+		return
+	}
+
+	resp = adoptForwardedResponse(resp, id)
+	if len(resp) > buf.Size {
+		errors.LogError(ctx, "forwarded response for domain ", domain, " is too large: ", len(resp))
+		noData()
+		return
+	}
+
+	b := buf.New()
+	if _, err := b.Write(resp); err != nil {
+		errors.LogInfoInner(ctx, err, "write forwarded response into buffer")
+		b.Release()
+		noData()
+		return
+	}
+
+	if err := writer.WriteMessage(b); err != nil {
+		errors.LogInfoInner(ctx, err, "write forwarded answer")
+		timer.SetTimeout(0)
+	}
+}
+
+// adoptForwardedResponse restores the client's transaction ID and drops the additional
+// section. Address records sitting there as glue would let the client reach a SRV
+// target without ever querying its A/AAAA record, escaping DNS-based routing; the OPT
+// record goes with them, since the client never negotiated EDNS0 with us. The
+// truncation bit is left alone: hiding it would hand the client a silently incomplete
+// answer, so it is allowed to retry over TCP.
+func adoptForwardedResponse(payload []byte, id uint16) []byte {
+	patchID := func() []byte {
+		if len(payload) >= 2 {
+			binary.BigEndian.PutUint16(payload, id)
+		}
+		return payload
+	}
+
+	var msg dnsmessage.Message
+	if err := msg.Unpack(payload); err != nil {
+		// An answer we cannot take apart still beats no answer at all.
+		errors.LogInfoInner(context.Background(), err, "unpack forwarded DNS response")
+		return patchID()
+	}
+
+	msg.Header.ID = id
+	msg.Additionals = nil
+
+	out, err := msg.Pack()
+	if err != nil {
+		errors.LogInfoInner(context.Background(), err, "repack forwarded DNS response")
+		return patchID()
+	}
+	return out
+}
+
+// negativeTTL is the caching TTL advertised in the synthesized SOA.
+const negativeTTL = 300
+
+// negativeMBox is a placeholder RNAME for the synthesized SOA. `.invalid` is reserved
+// by RFC 2606 and can never resolve.
+var negativeMBox = dnsmessage.MustNewName("nobody.invalid.")
+
+// rejectNonIPQuery answers a query locally with the rCode carried by the matched rule,
+// leaving the answer section empty. For NOERROR, i.e. NODATA as defined in RFC 2308
+// Section 2.2, and for NXDOMAIN, a synthetic SOA is placed in the authority section so
+// the client can negative cache the result instead of retrying. Codes such as REFUSED
+// convey a refusal rather than authoritative knowledge of the name, so they carry no SOA.
 func (h *Handler) rejectNonIPQuery(id uint16, qType dnsmessage.Type, domain string, writer dns_proto.MessageWriter, rCode dnsmessage.RCode) error {
 	domainT := strings.TrimSuffix(domain, ".")
 	if domainT == "" {
 		return errors.New("empty domain name")
 	}
+	name, err := dnsmessage.NewName(domain)
+	if err != nil {
+		errors.LogInfo(context.Background(), "unexpected domain ", domain, " when building reject message: ", err)
+		return err
+	}
+
 	b := buf.New()
 	rawBytes := b.Extend(buf.Size)
 	builder := dnsmessage.NewBuilder(rawBytes[:0], dnsmessage.Header{
@@ -412,15 +520,34 @@ func (h *Handler) rejectNonIPQuery(id uint16, qType dnsmessage.Type, domain stri
 	})
 	builder.EnableCompression()
 	common.Must(builder.StartQuestions())
-	err := builder.Question(dnsmessage.Question{
-		Name:  dnsmessage.MustNewName(domain),
+	if err := builder.Question(dnsmessage.Question{
+		Name:  name,
 		Class: dnsmessage.ClassINET,
 		Type:  qType,
-	})
-	if err != nil {
+	}); err != nil {
 		errors.LogInfo(context.Background(), "unexpected domain ", domain, " when building reject message: ", err)
 		b.Release()
 		return err
+	}
+
+	if rCode == dnsmessage.RCodeSuccess || rCode == dnsmessage.RCodeNameError {
+		common.Must(builder.StartAuthorities())
+		if err := builder.SOAResource(
+			dnsmessage.ResourceHeader{Name: name, Class: dnsmessage.ClassINET, TTL: negativeTTL},
+			dnsmessage.SOAResource{
+				NS:      name,
+				MBox:    negativeMBox,
+				Serial:  1,
+				Refresh: 3600,
+				Retry:   600,
+				Expire:  86400,
+				MinTTL:  negativeTTL,
+			},
+		); err != nil {
+			errors.LogInfoInner(context.Background(), err, "build SOA for reject message")
+			b.Release()
+			return err
+		}
 	}
 
 	msgBytes, err := builder.Finish()

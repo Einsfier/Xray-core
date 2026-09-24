@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"encoding/binary"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ type ClassicNameServer struct {
 	cacheController *CacheController
 	address         *net.Destination
 	requests        map[uint16]*udpDnsRequest
+	rawRequests     map[uint16]chan []byte
 	udpServer       *udp.Dispatcher
 	requestsCleanup *task.Periodic
 	reqID           uint32
@@ -47,6 +49,7 @@ func NewClassicNameServer(address net.Destination, dispatcher routing.Dispatcher
 		cacheController: NewCacheController(strings.ToUpper(address.String()), disableCache, serveStale, serveExpiredTTL),
 		address:         &address,
 		requests:        make(map[uint16]*udpDnsRequest),
+		rawRequests:     make(map[uint16]chan []byte),
 		clientIP:        clientIP,
 	}
 	s.requestsCleanup = &task.Periodic{
@@ -95,6 +98,15 @@ func (s *ClassicNameServer) RequestsCleanup() error {
 // HandleResponse handles udp response packet from remote DNS server.
 func (s *ClassicNameServer) HandleResponse(ctx context.Context, packet *udp_proto.Packet) {
 	payload := packet.Payload
+
+	// Forwarded queries share the request ID space with IP queries, so a response
+	// belongs to at most one of the two tables. Try the forwarded one first, as it
+	// needs the payload before parseResponse discards everything but the IPs.
+	if s.deliverRaw(payload.Bytes()) {
+		payload.Release()
+		return
+	}
+
 	ipRec, err := parseResponse(payload.Bytes())
 	payload.Release()
 	if err != nil {
@@ -150,6 +162,67 @@ func (s *ClassicNameServer) addPendingRequest(req *udpDnsRequest) {
 	s.requests[id] = req
 	s.Unlock()
 	common.Must(s.requestsCleanup.Start())
+}
+
+// deliverRaw hands a response to the QueryRaw call waiting on its request ID and
+// reports whether one was found.
+func (s *ClassicNameServer) deliverRaw(payload []byte) bool {
+	if len(payload) < 2 {
+		return false
+	}
+	id := binary.BigEndian.Uint16(payload)
+
+	s.Lock()
+	ch, ok := s.rawRequests[id]
+	if ok {
+		delete(s.rawRequests, id)
+	}
+	s.Unlock()
+	if !ok {
+		return false
+	}
+
+	// The buffer is recycled as soon as we return, so the waiter gets a copy.
+	resp := make([]byte, len(payload))
+	copy(resp, payload)
+	ch <- resp
+	return true
+}
+
+// QueryRaw implements RawServer.
+func (s *ClassicNameServer) QueryRaw(ctx context.Context, fqdn string, qType dnsmessage.Type) ([]byte, error) {
+	errors.LogInfo(ctx, s.Name(), " forwarding ", qType, " query for: ", fqdn)
+
+	id := s.newReqID()
+	msg, err := buildRawReqMsg(fqdn, qType, id, s.clientIP, 0)
+	if err != nil {
+		return nil, err
+	}
+	b, err := dns.PackMessage(msg)
+	if err != nil {
+		return nil, errors.New("failed to pack dns query").Base(err)
+	}
+
+	// Buffered so a response arriving right as we give up does not block the
+	// dispatcher's goroutine.
+	ch := make(chan []byte, 1)
+	s.Lock()
+	s.rawRequests[id] = ch
+	s.Unlock()
+	defer func() {
+		s.Lock()
+		delete(s.rawRequests, id)
+		s.Unlock()
+	}()
+
+	s.udpServer.Dispatch(toDnsContext(ctx, s.address.String()), *s.address, b)
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case resp := <-ch:
+		return resp, nil
+	}
 }
 
 // getCacheController implements CachedNameserver.

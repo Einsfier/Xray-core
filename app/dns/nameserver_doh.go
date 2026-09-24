@@ -23,6 +23,7 @@ import (
 	dns_feature "github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport/internet"
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/net/http2"
 )
 
@@ -221,6 +222,36 @@ func (s *DoHNameServer) sendQuery(ctx context.Context, noResponseErrCh chan<- er
 			s.cacheController.updateRecord(r, rec)
 		}(req)
 	}
+}
+
+// QueryRaw implements RawServer.
+func (s *DoHNameServer) QueryRaw(ctx context.Context, fqdn string, qType dnsmessage.Type) ([]byte, error) {
+	errors.LogInfo(ctx, s.Name(), " forwarding ", qType, " query for: ", fqdn)
+
+	if s.Name()+"." == "DOH//"+fqdn {
+		return nil, errors.New("tries to resolve itself!", s.Name())
+	}
+
+	msg, err := buildRawReqMsg(fqdn, qType, s.newReqID(), s.clientIP, int(crypto.RandBetween(100, 300)))
+	if err != nil {
+		return nil, err
+	}
+	b, err := dns.PackMessage(msg)
+	if err != nil {
+		return nil, errors.New("failed to pack dns query").Base(err)
+	}
+	defer b.Release()
+
+	dnsCtx := ctx
+	if inbound := session.InboundFromContext(ctx); inbound != nil {
+		dnsCtx = session.ContextWithInbound(dnsCtx, inbound)
+	}
+	dnsCtx = session.ContextWithContent(dnsCtx, &session.Content{
+		Protocol:       "https",
+		SkipDNSResolve: true,
+	})
+
+	return s.dohHTTPSContext(dnsCtx, b.Bytes())
 }
 
 func (s *DoHNameServer) dohHTTPSContext(ctx context.Context, b []byte) ([]byte, error) {
