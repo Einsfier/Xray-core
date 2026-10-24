@@ -8,12 +8,17 @@
 * DNS-route capability.
 * Conn-track capability for routing decision.
 * HTTP health-check inbounds.
+* SRV query forwarding through the DNS outbound.
 
 If you have any questions which are not related to features described above,
 please submit it to [upstream project](https://github.com/XTLS/Xray-core).
 
 ### 更新记录
 
+* 2026/10/24: 同步上游至 Xray-core v26.10.21。配置示例改用上游的新写法：freedom outbound 的 `ipsBlocked` 已被上游移除，改为 `finalRules`；DNS outbound 的 `nonIPQuery` 已被上游废弃，改为 `rules`。
+* 2026/09/24: DNS outbound 支持转发 SRV（type 33）查询。内置DNS原本只处理A/AAAA，SRV查询只能得到NODATA。现在SRV查询按DNS的domain规则选择上游DNS服务器并转发，同样带上DNS服务器的tag，因此按DNS `inboundTag` 写的路由规则依然生效；上游的回复原样返回，不做缓存。为防止客户端借助回复中的glue地址绕过基于DNS的路由，回复的additional section会被丢弃。目前支持UDP、DoH和TCP上游，DoQ暂不支持，会跳到下一个DNS服务器。本地直接应答的NODATA/NXDOMAIN回复会附带一条合成的SOA记录，便于客户端做负缓存。
+* 2026/06/01: outbound selector 按前缀匹配不到任何outbound时，退化为按子串（contains）再匹配一次。
+* 2026/04/28: 修复上游geodata支持热重载后，`dynamic-ipset:` 规则因类型断言失败而不生效的问题。
 * 2026/04/21: 修复DNS UDP Server在负载均衡模式下，长期复用同一条连接导致无法自动选择最优出口的问题。引入`NoCacheDispatcher`，超过容忍时间后自动新建连接以触发负载均衡重新选路。
 * 2026/04/10: 从v2ray-core移植dnsCircuit模块至Xray-core。新增`multiObservatory`配置支持（允许为不同负载均衡器配置独立的`burst`/`default`类型观测器）。修复`leastload`策略中`tolerance`参数不生效的问题（原实现未读取该配置值，现已正确按失败率过滤节点）。修改Observatory gRPC Command服务：`GetOutboundStatusRequest`新增`tag`字段支持按tag查询；当使用`multiObservatory`时，自动聚合所有子观测器的结果返回；同时注册了v2ray兼容的gRPC ServiceName以支持现有客户端。
 * 2024/08/15: 添加了statsServer配置，可配合个人修改版的[v2ray-exporter](https://github.com/povsister/v2ray-exporter)/prometheus/grafana观测Xray出口及客户端实时流量或趋势。v2ray-exporter已新增Observatory指标采集支持（存活状态、延迟、健康探测统计等），详见[v2ray-exporter仓库](https://github.com/povsister/v2ray-exporter)。
@@ -744,7 +749,13 @@ ROSv7可直接使用`Tools - Netwatch`新建探活任务，照下图设置即可
       "tag": "direct",
       "protocol": "freedom",
       "settings": {
-        "ipsBlocked": [] // 显式关闭默认私有 IP 拦截
+        // 上游已移除 ipsBlocked，改用 finalRules。
+        // freedom 默认只对来自 vless/vmess/trojan/shadowsocks/hysteria/wireguard 入站的流量拦截私有IP，
+        // 透明代理（dokodemo-door）和内置DNS的流量本来就不受影响；这里显式放行私有IP，
+        // 防止以后加了上述入站后，经 direct 访问内网的流量被拦截
+        "finalRules": [
+          { "action": "allow", "ip": ["geoip:private"] }
+        ]
       },
       "streamSettings": {
         "sockopt": {
@@ -761,7 +772,15 @@ ROSv7可直接使用`Tools - Netwatch`新建探活任务，照下图设置即可
     {
       "tag": "dns-out",
       "protocol": "dns",
-      "settings": { "nonIPQuery": "reject" }, // Xray新增，可选 skip/drop/reject
+      "settings": {
+        // 上游已废弃 nonIPQuery，改用 rules，按顺序匹配，第一条命中即生效。
+        // 1/28/33 分别为 A/AAAA/SRV：A/AAAA 由内置DNS解析，SRV 由本项目转发到上游DNS
+        // 注意：旧的 nonIPQuery 写法只会劫持 A/AAAA，SRV 会被直接拒绝，无法使用SRV转发
+        "rules": [
+          { "action": "hijack", "qType": "1,28,33" },
+          { "action": "return", "rCode": 5 } // 其余类型返回 REFUSED，相当于旧的 nonIPQuery: "reject"
+        ]
+      },
       "streamSettings": { "sockopt": { "mark": 255 } }
     },
     // ---- VLESS + REALITY 出口示例 ----
@@ -1164,7 +1183,8 @@ ROSv7可直接使用`Tools - Netwatch`新建探活任务，照下图设置即可
 | 配置项 | V2Ray | Xray |
 |-------|-------|------|
 | 推荐协议 | VMess | VLESS + REALITY |
-| freedom outbound 私有IP拦截 | 无此配置 | `settings.ipsBlocked: []` 显式关闭 |
+| freedom outbound 私有IP拦截 | 无此配置 | `settings.finalRules` 显式放行 `geoip:private` |
+| DNS outbound 非A/AAAA查询处理 | 不支持 | `settings.rules`（`hijack` 1/28/33 时支持 SRV 转发） |
 | DNS fallback策略 | `fallbackStrategy: "disabled-if-any-match"` | `disableFallbackIfMatch: true` |
 | DNS过期缓存 | 不支持 | `serveExpiredTTL: 90` |
 | DNS并行查询 | 不支持 | `enableParallelQuery: true` |
